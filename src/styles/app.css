@@ -1,0 +1,767 @@
+/* EasyRip - SAP-Style Compact UI */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --sap-blue: #0a6ed1;
+  --sap-blue-dark: #0854a0;
+  --sap-blue-light: #e5f0fa;
+  --sap-gray-1: #f5f6f7;
+  --sap-gray-2: #edeff0;
+  --sap-gray-3: #d9d9d9;
+  --sap-gray-4: #89919a;
+  --sap-text: #32363a;
+  --sap-text-light: #6a6d70;
+  --sap-success: #107e3e;
+  --sap-warning: #e9730c;
+  --sap-error: #bb0000;
+  --sap-white: #ffffff;
+}
+
+body {
+  font-family: '72', 'Segoe UI', Arial, sans-serif;
+  font-size: 13px;
+  background: var(--sap-gray-1);
+  color: var(--sap-text);
+  line-height: 1.4;
+}
+
+.app {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Compact Header */
+.app-header {
+  background: var(--sap-blue);
+  color: white;
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.app-header h1 {
+  font-size: 15px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* Main Content */
+.app-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  gap: 12px;
+  overflow: hidden;
+}
+
+/* Toolbar */
+.toolbar {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--sap-white);
+  border: 1px solid var(--sap-gray-3);
+  border-radius: 4px;
+  align-items: center;
+}
+
+.toolbar-separator {
+  width: 1px;
+  height: 24px;
+  background: var(--sap-gray-3);
+  margin: 0 4px;
+}
+
+.toolbar-info {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--sap-text-light);
+}
+
+/* Buttons - SAP Style */
+.btn {
+  padding: 6px 12px;
+  border: 1px solid var(--sap-gray-3);
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--sap-white);
+  color: var(--sap-text);
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--sap-gray-2);
+  border-color: var(--sap-gray-4);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--sap-blue);
+  border-color: var(--sap-blue);
+  color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--sap-blue-dark);
+  border-color: var(--sap-blue-dark);
+}
+
+.btn-success {
+  background: var(--sap-success);
+  border-color: var(--sap-success);
+  color: white;
+}
+
+.btn-success:hover:not(:disabled) {
+  background: #0a6129;
+}
+
+.btn-danger {
+  background: var(--sap-error);
+  border-color: var(--sap-error);
+  color: white;
+}
+
+.btn-warning {
+  background: var(--sap-warning);
+  border-color: var(--sap-warning);
+  color: white;
+}
+
+.btn-warning:hover:not(:disabled) {
+  background: #c76300;
+}
+
+.btn-sm {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+/* Drive Table Panel */
+.drives-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--sap-white);
+  border: 1px solid var(--sap-gray-3);
+  border-radius: 4px;
+  overflow: hidden;
+  min-height: 200px;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--sap-gray-2);
+  border-bottom: 1px solid var(--sap-gray-3);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.drive-table-container {
+  flex: 1;
+  overflow: auto;
+}
+
+.drive-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.drive-table th {
+  background: var(--sap-gray-2);
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 1px solid var(--sap-gray-3);
+  position: sticky;
+  top: 0;
+  white-space: nowrap;
+}
+
+.drive-table td {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--sap-gray-2);
+  vertical-align: middle;
+}
+
+.drive-table tbody tr:hover {
+  background: var(--sap-blue-light);
+}
+
+/* Status Badges */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.status-idle {
+  background: var(--sap-gray-2);
+  color: var(--sap-text-light);
+}
+
+.status-running {
+  background: #fff3b0;
+  color: #b44f00;
+}
+
+.status-queued {
+  background: #e8e0f7;
+  color: #6b3fa0;
+}
+
+.status-complete {
+  background: #dcf5e7;
+  color: var(--sap-success);
+}
+
+.status-error {
+  background: #ffebeb;
+  color: var(--sap-error);
+}
+
+.status-exists {
+  background: #e6f2ff;
+  color: #0854a0;
+}
+
+.status-incomplete {
+  background: #fff3cd;
+  color: #856404;
+}
+
+/* Disc Type Badge */
+.disc-type {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.disc-dvd {
+  background: #ffd699;
+  color: #8a5a00;
+}
+
+.disc-bluray {
+  background: #b3d4ff;
+  color: #003d7a;
+}
+
+/* Progress Bar - Compact */
+.progress-cell {
+  min-width: 120px;
+}
+
+.progress-bar {
+  height: 16px;
+  background: var(--sap-gray-2);
+  border-radius: 2px;
+  overflow: hidden;
+  position: relative;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--sap-blue);
+  transition: width 0.5s ease-out;
+}
+
+.progress-fill.running {
+  background: linear-gradient(
+    90deg,
+    var(--sap-blue) 0%,
+    #3d9df6 50%,
+    var(--sap-blue) 100%
+  );
+  background-size: 200% 100%;
+  animation: progress-shimmer 1.5s ease-in-out infinite;
+}
+
+.progress-fill.running.indeterminate {
+  width: 30% !important;
+  animation: progress-pulse 1.5s ease-in-out infinite;
+}
+
+.progress-fill.complete {
+  background: var(--sap-success);
+}
+
+.progress-fill.error {
+  background: var(--sap-error);
+}
+
+.progress-fill.incomplete {
+  background: var(--sap-warning);
+}
+
+@keyframes progress-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@keyframes progress-pulse {
+  0%, 100% {
+    opacity: 0.7;
+    transform: translateX(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateX(230%);
+  }
+}
+
+.progress-text {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--sap-text);
+}
+
+/* Log Panel */
+.log-panel {
+  height: 180px;
+  display: flex;
+  flex-direction: column;
+  background: var(--sap-white);
+  border: 1px solid var(--sap-gray-3);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.log-tabs {
+  display: flex;
+  background: var(--sap-gray-2);
+  border-bottom: 1px solid var(--sap-gray-3);
+  overflow-x: auto;
+}
+
+.log-tab {
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  border-bottom: 2px solid transparent;
+  color: var(--sap-text-light);
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.log-tab:hover {
+  background: var(--sap-gray-1);
+}
+
+.log-tab.active {
+  background: var(--sap-white);
+  border-bottom-color: var(--sap-blue);
+  color: var(--sap-blue);
+  font-weight: 600;
+}
+
+.log-tab .tab-status {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--sap-gray-4);
+}
+
+.log-tab .tab-status.running {
+  background: var(--sap-warning);
+  animation: pulse 1s infinite;
+}
+
+.log-tab .tab-status.complete {
+  background: var(--sap-success);
+}
+
+.log-tab .tab-status.error {
+  background: var(--sap-error);
+}
+
+.log-tab .tab-status.exists {
+  background: var(--sap-blue);
+}
+
+.log-tab .tab-status.incomplete {
+  background: var(--sap-warning);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.log-content {
+  flex: 1;
+  overflow: auto;
+  padding: 8px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  background: #1e1e1e;
+  color: #d4d4d4;
+}
+
+.log-line {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.log-line.error {
+  color: #f48771;
+}
+
+.log-line.success {
+  color: #89d185;
+}
+
+.log-line.info {
+  color: #6cb6ff;
+}
+
+.log-line.warning {
+  color: #ffcc00;
+}
+
+.log-empty {
+  color: var(--sap-gray-4);
+  padding: 20px;
+  text-align: center;
+}
+
+/* Footer */
+.app-footer {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: var(--sap-gray-2);
+  border-top: 1px solid var(--sap-gray-3);
+  font-size: 11px;
+  color: var(--sap-text-light);
+}
+
+/* Error Banner */
+.error-banner {
+  background: #ffebeb;
+  border: 1px solid var(--sap-error);
+  color: var(--sap-error);
+  padding: 8px 12px;
+  border-radius: 4px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+}
+
+.error-banner button {
+  background: transparent;
+  border: none;
+  color: var(--sap-error);
+  cursor: pointer;
+  padding: 0 4px;
+  font-size: 16px;
+}
+
+/* Action buttons in table */
+.action-cell {
+  white-space: nowrap;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--sap-gray-1);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--sap-gray-4);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #6a6d70;
+}
+
+/* No drives message */
+.no-drives {
+  padding: 40px;
+  text-align: center;
+  color: var(--sap-text-light);
+}
+
+/* Drive letter */
+.drive-letter {
+  font-weight: 600;
+  font-family: 'Consolas', monospace;
+}
+
+/* Output path */
+.output-path {
+  font-family: 'Consolas', monospace;
+  font-size: 11px;
+  color: var(--sap-text-light);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Size cells */
+.size-cell {
+  font-family: 'Consolas', monospace;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.size-ratio {
+  color: var(--sap-text-light);
+  font-size: 10px;
+}
+
+/* Error and Warning Indicators */
+.error-indicator,
+.warning-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: bold;
+  margin-left: 4px;
+}
+
+.error-indicator {
+  background: var(--sap-error);
+  color: white;
+}
+
+.warning-indicator {
+  background: var(--sap-warning);
+  color: white;
+}
+
+.error-detail {
+  font-size: 10px;
+  color: var(--sap-error);
+  margin-top: 2px;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.has-tooltip {
+  cursor: help;
+  position: relative;
+}
+
+.has-tooltip:hover::after {
+  content: attr(title);
+  position: absolute;
+  left: 0;
+  top: 100%;
+  z-index: 100;
+  background: #333;
+  color: white;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  white-space: normal;
+  max-width: 300px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
+/* Modal Styles */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal {
+  background: var(--sap-white);
+  border-radius: 8px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+  min-width: 400px;
+  max-width: 90vw;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-large {
+  width: 800px;
+  height: 600px;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: var(--sap-gray-2);
+  border-bottom: 1px solid var(--sap-gray-3);
+  border-radius: 8px 8px 0 0;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.modal-header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.modal-close {
+  background: transparent;
+  border: none;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 8px;
+  color: var(--sap-text-light);
+}
+
+.modal-close:hover {
+  color: var(--sap-error);
+}
+
+.modal-body {
+  padding: 16px;
+  flex: 1;
+  overflow: auto;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--sap-gray-1);
+  border-top: 1px solid var(--sap-gray-3);
+  border-radius: 0 0 8px 8px;
+  align-items: center;
+}
+
+.modal-footer small {
+  margin-right: auto;
+  color: var(--sap-text-light);
+  font-size: 11px;
+}
+
+/* Form Styles */
+.form-group {
+  margin-bottom: 16px;
+}
+
+.form-group label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.form-group input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--sap-gray-3);
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.form-group input:focus {
+  outline: none;
+  border-color: var(--sap-blue);
+  box-shadow: 0 0 0 2px var(--sap-blue-light);
+}
+
+.form-group small {
+  display: block;
+  margin-top: 4px;
+  color: var(--sap-text-light);
+  font-size: 11px;
+}
+
+/* System Log Content */
+.system-log-content {
+  background: #1e1e1e;
+  color: #d4d4d4;
+  padding: 12px;
+  border-radius: 4px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow: auto;
+  height: 100%;
+  margin: 0;
+}

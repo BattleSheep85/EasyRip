@@ -1,0 +1,48 @@
+# EasyRip Application Files
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+dist-renderer/
+dist-electron/
+build/
+out/
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+npm-debug.log*
+logs/
+
+# Settings (user-specific)
+.easyrip-settings.json
+
+# Test outputs
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+
+# Temporary
+tmp/
+temp/
+
+# Junk files
+NUL
+undefined

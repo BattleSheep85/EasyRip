@@ -1,0 +1,128 @@
+{
+  "team": {
+    "name": "EasyRip Agentic Coding Team",
+    "version": "1.0.0",
+    "methodology": "Lean Agentic Development",
+    "maxConcurrentStories": 3,
+    "wipLimits": {
+      "ready": 5,
+      "inPromptDesign": 2,
+      "inIntegration": 2,
+      "inQA": 2,
+      "done": "unlimited"
+    }
+  },
+  "agents": [
+    {
+      "id": "agentic-architect",
+      "name": "Agentic Architect",
+      "type": "system-architect",
+      "purpose": "Defines the autonomous-coding vision, selects the LLM/agent framework, and sets safety/ethics guardrails",
+      "responsibilities": [
+        "Define autonomous coding architecture",
+        "Select and configure LLM/agent frameworks",
+        "Establish safety and ethics guardrails",
+        "Design agent interaction patterns",
+        "Set code generation policies"
+      ],
+      "tools": ["architecture-review", "framework-selection", "guardrail-config"],
+      "promptFile": "prompts/agentic-architect.md"
+    },
+    {
+      "id": "prompt-engineer",
+      "name": "Prompt Engineer",
+      "type": "researcher",
+      "purpose": "Crafts, tests, and iterates prompt templates that steer agents toward correct, maintainable code",
+      "responsibilities": [
+        "Design and iterate prompt templates",
+        "A/B test prompt variations",
+        "Optimize for code quality metrics",
+        "Version control prompts",
+        "Document prompt patterns"
+      ],
+      "tools": ["promptfoo", "prompt-versioning", "metrics-analysis"],
+      "promptFile": "prompts/prompt-engineer.md"
+    },
+    {
+      "id": "tool-integrator",
+      "name": "Tool-Integrator",
+      "type": "cicd-engineer",
+      "purpose": "Connects agents to CI/CD, version control, static analysis, and deployment pipelines",
+      "responsibilities": [
+        "Build API adapters and plugins",
+        "Configure CI/CD pipelines",
+        "Integrate static analysis tools",
+        "Set up deployment automation",
+        "Create agent-tool bridges"
+      ],
+      "tools": ["github-actions", "semgrep", "docker", "mcp-adapters"],
+      "promptFile": "prompts/tool-integrator.md"
+    },
+    {
+      "id": "qa-bot-designer",
+      "name": "QA Bot-Designer",
+      "type": "tester",
+      "purpose": "Designs automated test-generation agents, review bots, and verification loops",
+      "responsibilities": [
+        "Design test-generation agents",
+        "Create review bot workflows",
+        "Build verification loops",
+        "Implement regression detection",
+        "Automate quality gates"
+      ],
+      "tools": ["jest", "pytest", "test-generation", "coverage-analysis"],
+      "promptFile": "prompts/qa-bot-designer.md"
+    },
+    {
+      "id": "operations-coach",
+      "name": "Operations Coach",
+      "type": "perf-analyzer",
+      "purpose": "Monitors resource usage, latency, cost; runs retrospectives, enforces lean flow",
+      "responsibilities": [
+        "Monitor resource usage and costs",
+        "Track latency and performance",
+        "Enforce Kanban WIP limits",
+        "Run retrospectives",
+        "Optimize lean flow"
+      ],
+      "tools": ["grafana", "prometheus", "cost-tracker", "kanban-enforcer"],
+      "promptFile": "prompts/operations-coach.md"
+    }
+  ],
+  "ceremonies": {
+    "backlogGrooming": {
+      "frequency": "weekly",
+      "duration": "30min",
+      "participants": ["all"]
+    },
+    "pairCodingWithAgents": {
+      "frequency": "daily",
+      "duration": "1h",
+      "participants": ["prompt-engineer", "agentic-architect", "tool-integrator"]
+    },
+    "retrospective": {
+      "frequency": "biweekly",
+      "duration": "45min",
+      "participants": ["all"],
+      "metrics": ["cycleTime", "defectRate", "tokenCost"]
+    }
+  },
+  "kpis": {
+    "cycleTimePerStory": {
+      "target": "<=2 days",
+      "unit": "days"
+    },
+    "defectEscapeRate": {
+      "target": "<=5%",
+      "unit": "percentage"
+    },
+    "tokenCostPerStory": {
+      "target": "<=$0.10",
+      "unit": "USD"
+    },
+    "teamWIP": {
+      "target": "<=3",
+      "unit": "stories"
+    }
+  }
+}

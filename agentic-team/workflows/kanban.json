@@ -1,0 +1,93 @@
+{
+  "workflow": {
+    "name": "EasyRip Lean Kanban",
+    "version": "1.0.0",
+    "type": "kanban"
+  },
+  "columns": [
+    {
+      "id": "ready",
+      "name": "Ready",
+      "wipLimit": 5,
+      "description": "Stories sized and ready for work"
+    },
+    {
+      "id": "in-prompt-design",
+      "name": "In-Prompt-Design",
+      "wipLimit": 2,
+      "description": "Prompt Engineer + Agentic Architect co-creating prompts"
+    },
+    {
+      "id": "in-integration",
+      "name": "In-Integration",
+      "wipLimit": 2,
+      "description": "Tool-Integrator connecting agents to pipelines"
+    },
+    {
+      "id": "in-qa",
+      "name": "In-QA",
+      "wipLimit": 2,
+      "description": "QA Bot-Designer running verification loops"
+    },
+    {
+      "id": "done",
+      "name": "Done",
+      "wipLimit": null,
+      "description": "Story complete and validated"
+    }
+  ],
+  "transitions": {
+    "ready-to-prompt": {
+      "from": "ready",
+      "to": "in-prompt-design",
+      "requiredBy": ["prompt-engineer", "agentic-architect"]
+    },
+    "prompt-to-integration": {
+      "from": "in-prompt-design",
+      "to": "in-integration",
+      "requiredBy": ["tool-integrator"],
+      "validation": ["prompt-complete", "architecture-approved"]
+    },
+    "integration-to-qa": {
+      "from": "in-integration",
+      "to": "in-qa",
+      "requiredBy": ["qa-bot-designer"],
+      "validation": ["adapter-working", "ci-configured"]
+    },
+    "qa-to-done": {
+      "from": "in-qa",
+      "to": "done",
+      "requiredBy": ["operations-coach"],
+      "validation": ["tests-pass", "coverage-met", "no-security-issues"]
+    },
+    "qa-to-prompt": {
+      "from": "in-qa",
+      "to": "in-prompt-design",
+      "trigger": "test-failure",
+      "description": "Stop-the-line: returns to prompt design on failure"
+    }
+  },
+  "policies": {
+    "stopTheLine": {
+      "enabled": true,
+      "triggers": ["test-failure", "security-vulnerability", "coverage-drop"]
+    },
+    "expedite": {
+      "enabled": true,
+      "maxExpediteItems": 1,
+      "triggers": ["critical-bug", "security-patch"]
+    }
+  },
+  "ceremonies": {
+    "standUp": {
+      "frequency": "daily",
+      "duration": "15min",
+      "focus": ["blocked-items", "wip-violations", "flow-issues"]
+    },
+    "replenishment": {
+      "frequency": "weekly",
+      "duration": "30min",
+      "focus": ["backlog-grooming", "story-sizing"]
+    }
+  }
+}

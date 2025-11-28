@@ -1,0 +1,77 @@
+{
+  "mcpServers": {
+    "claude-flow": {
+      "command": "npx",
+      "args": ["claude-flow@alpha", "mcp", "start"],
+      "description": "Core swarm coordination and agent orchestration",
+      "required": true,
+      "capabilities": [
+        "swarm_init",
+        "agent_spawn",
+        "task_orchestrate",
+        "memory_usage",
+        "neural_status"
+      ]
+    },
+    "ruv-swarm": {
+      "command": "npx",
+      "args": ["ruv-swarm", "mcp", "start"],
+      "description": "Enhanced multi-agent coordination patterns",
+      "required": false,
+      "capabilities": [
+        "swarm_coordinate",
+        "agent_sync",
+        "distributed_tasks"
+      ]
+    },
+    "flow-nexus": {
+      "command": "npx",
+      "args": ["flow-nexus@latest", "mcp", "start"],
+      "description": "Cloud-based orchestration and sandbox execution",
+      "required": false,
+      "capabilities": [
+        "sandbox_create",
+        "sandbox_execute",
+        "neural_train",
+        "realtime_subscribe"
+      ]
+    }
+  },
+  "toolAdapters": {
+    "github": {
+      "type": "github-actions",
+      "config": {
+        "workflowPath": ".github/workflows",
+        "triggers": ["push", "pull_request"]
+      }
+    },
+    "staticAnalysis": {
+      "type": "semgrep",
+      "config": {
+        "rules": ["auto", "security"],
+        "autoFix": true
+      }
+    },
+    "testing": {
+      "type": "jest",
+      "config": {
+        "coverage": true,
+        "coverageThreshold": 80
+      }
+    },
+    "deployment": {
+      "type": "electron-builder",
+      "config": {
+        "platforms": ["win", "mac", "linux"],
+        "autoUpdate": true
+      }
+    }
+  },
+  "agentToolMappings": {
+    "agentic-architect": ["claude-flow", "ruv-swarm"],
+    "prompt-engineer": ["claude-flow", "promptfoo"],
+    "tool-integrator": ["github", "staticAnalysis", "deployment"],
+    "qa-bot-designer": ["testing", "staticAnalysis"],
+    "operations-coach": ["claude-flow", "flow-nexus"]
+  }
+}

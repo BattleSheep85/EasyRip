@@ -1,0 +1,81 @@
+{
+  "agent": {
+    "id": "operations-coach",
+    "name": "Operations Coach",
+    "version": "1.0.0"
+  },
+  "type": "perf-analyzer",
+  "claudeCode": {
+    "subagentType": "perf-analyzer",
+    "model": "sonnet"
+  },
+  "purpose": "Monitors resource usage, latency, cost; runs retrospectives, enforces lean flow (Kanban limits, WIP caps)",
+  "responsibilities": [
+    "Track token usage per agent",
+    "Monitor API call latency",
+    "Track cost per story",
+    "Enforce WIP limits",
+    "Identify bottlenecks",
+    "Run retrospectives",
+    "Generate metrics dashboards"
+  ],
+  "tools": [
+    "grafana",
+    "prometheus",
+    "cost-tracker",
+    "kanban-enforcer",
+    "metrics-dashboard"
+  ],
+  "mcpTools": [
+    "mcp__claude-flow__swarm_status",
+    "mcp__claude-flow__agent_metrics",
+    "mcp__claude-flow__memory_usage",
+    "mcp__flow-nexus__realtime_subscribe"
+  ],
+  "hooks": {
+    "preTask": "npx claude-flow@alpha hooks pre-task --description \"Operations monitoring\"",
+    "postTask": "npx claude-flow@alpha hooks post-task --task-id \"ops-${timestamp}\"",
+    "sessionEnd": "npx claude-flow@alpha hooks session-end --export-metrics true"
+  },
+  "prompts": {
+    "system": "../prompts/operations-coach.md",
+    "templates": []
+  },
+  "coordination": {
+    "upstream": ["qa-bot-designer"],
+    "downstream": [],
+    "parallel": ["agentic-architect"]
+  },
+  "metrics": {
+    "track": [
+      "cycle-time",
+      "defect-escape-rate",
+      "token-cost-per-story",
+      "team-wip",
+      "bottleneck-frequency"
+    ]
+  },
+  "kanban": {
+    "enforce": true,
+    "wipLimits": {
+      "inPromptDesign": 2,
+      "inIntegration": 2,
+      "inQA": 2
+    },
+    "alerts": {
+      "wipViolation": "warning",
+      "cycleTimeExceeded": "warning",
+      "costOverrun": "alert",
+      "qualityGateFailed": "critical"
+    }
+  },
+  "retrospective": {
+    "frequency": "biweekly",
+    "duration": "45min",
+    "metricsToReview": [
+      "cycleTime",
+      "defectRate",
+      "tokenCost"
+    ]
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --test tests/utils.test.js 2>&1 || echo '[HOOK] Unit tests failed - please review'"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,73 @@
+{
+  "agent": {
+    "id": "qa-bot-designer",
+    "name": "QA Bot-Designer",
+    "version": "1.0.0"
+  },
+  "type": "tester",
+  "claudeCode": {
+    "subagentType": "tester",
+    "model": "sonnet"
+  },
+  "purpose": "Designs automated test-generation agents, review bots, and verification loops that catch regressions early",
+  "responsibilities": [
+    "Auto-generate unit tests from code",
+    "Create integration test suites",
+    "Build E2E test scenarios",
+    "Design review bot workflows",
+    "Implement verification loops",
+    "Enforce quality gates",
+    "Trigger stop-the-line on failures"
+  ],
+  "tools": [
+    "jest",
+    "pytest",
+    "test-generation",
+    "coverage-analysis",
+    "security-scanning"
+  ],
+  "mcpTools": [
+    "mcp__claude-flow__task_orchestrate",
+    "mcp__claude-flow__memory_usage"
+  ],
+  "hooks": {
+    "preTask": "npx claude-flow@alpha hooks pre-task --description \"QA validation\"",
+    "postTask": "npx claude-flow@alpha hooks post-task --task-id \"qa-${timestamp}\"",
+    "postEdit": "npx claude-flow@alpha hooks post-edit --file \"${file}\" --memory-key \"swarm/qa/tests\""
+  },
+  "prompts": {
+    "system": "../prompts/qa-bot-designer.md",
+    "templates": []
+  },
+  "coordination": {
+    "upstream": ["tool-integrator"],
+    "downstream": ["operations-coach"],
+    "parallel": ["prompt-engineer"]
+  },
+  "metrics": {
+    "track": [
+      "tests-generated",
+      "coverage-percentage",
+      "defects-caught",
+      "false-positive-rate"
+    ]
+  },
+  "qualityGates": {
+    "unitTestCoverage": {
+      "threshold": 80,
+      "action": "block-merge"
+    },
+    "integrationTests": {
+      "threshold": "all-pass",
+      "action": "block-deploy"
+    },
+    "securityScan": {
+      "threshold": "no-high-critical",
+      "action": "block-release"
+    },
+    "performance": {
+      "threshold": "10%-regression",
+      "action": "warning"
+    }
+  }
+}
