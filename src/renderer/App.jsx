@@ -656,6 +656,17 @@ function App() {
                 />
                 <small>Backups stored in: {editedSettings?.basePath}\backup</small>
               </div>
+              <hr style={{margin: '16px 0', borderColor: '#3d3d3d'}} />
+              <div className="form-group">
+                <label>TMDB API Key:</label>
+                <input
+                  type="password"
+                  value={editedSettings?.tmdbApiKey || ''}
+                  onChange={e => setEditedSettings({...editedSettings, tmdbApiKey: e.target.value})}
+                  placeholder="Enter your TMDB API key"
+                />
+                <small>Get a free API key at <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer" style={{color: '#4da6ff'}}>themoviedb.org</a></small>
+              </div>
             </div>
             <div className="modal-footer">
               <button className="btn" onClick={() => setShowSettings(false)}>Cancel</button>

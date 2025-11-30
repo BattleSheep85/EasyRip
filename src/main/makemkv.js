@@ -18,6 +18,7 @@ export class MakeMKVAdapter {
     this.settingsPath = path.join(os.homedir(), '.easyrip-settings.json');
     this._settingsLoaded = false;
     this.lastError = null;
+    this.tmdbApiKey = '';
   }
 
   // Load saved settings from disk
@@ -28,9 +29,11 @@ export class MakeMKVAdapter {
       const settings = JSON.parse(data);
       this.makemkvPath = settings.makemkvPath || this.makemkvPath;
       this.basePath = settings.basePath || 'D:\\EasyRip';
+      this.tmdbApiKey = settings.tmdbApiKey || '';
     } catch {
       // Settings file doesn't exist yet, use defaults
       this.basePath = 'D:\\EasyRip';
+      this.tmdbApiKey = '';
     }
     this._settingsLoaded = true;
   }
@@ -40,6 +43,7 @@ export class MakeMKVAdapter {
     return {
       makemkvPath: this.makemkvPath,
       basePath: this.basePath,
+      tmdbApiKey: this.tmdbApiKey,
     };
   }
 
@@ -47,6 +51,7 @@ export class MakeMKVAdapter {
   async saveSettings(settings) {
     this.makemkvPath = settings.makemkvPath || this.makemkvPath;
     this.basePath = settings.basePath || this.basePath;
+    this.tmdbApiKey = settings.tmdbApiKey || '';
 
     await fs.writeFile(
       this.settingsPath,

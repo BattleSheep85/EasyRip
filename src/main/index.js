@@ -140,7 +140,7 @@ async function initializeMetadataSystem() {
       const started = await ollamaManager.start();
       if (started) {
         // Ensure model is available
-        const hasModel = await ollamaManager.hasModel(metadataSettings.ollamaModel || 'mistral');
+        const hasModel = await ollamaManager.hasModel(metadataSettings.ollamaModel || 'llama3.2');
         if (!hasModel) {
           logger.info('metadata', 'Model not found, will pull on first use');
         }
@@ -151,8 +151,10 @@ async function initializeMetadataSystem() {
 
     // Initialize TMDB client
     tmdbClient = getTMDBClient();
-    if (metadataSettings.tmdbApiKey) {
-      tmdbClient.setApiKey(metadataSettings.tmdbApiKey);
+    // Check for TMDB API key at top level (new) or nested in metadata (legacy)
+    const tmdbApiKey = settings.tmdbApiKey || metadataSettings.tmdbApiKey;
+    if (tmdbApiKey) {
+      tmdbClient.setApiKey(tmdbApiKey);
       logger.info('metadata', 'TMDB API key configured');
     } else {
       logger.info('metadata', 'TMDB API key not configured');
@@ -403,6 +405,33 @@ function setupIPC() {
         }
       }
 
+      // Auto-identify the backup (runs in background, doesn't block completion)
+      if (discIdentifier && result.path) {
+        try {
+          logger.info('start-backup', `Starting auto-identification for ${discName}`);
+          // Run identification asynchronously - don't await to avoid blocking
+          discIdentifier.identify(result.path, discName)
+            .then(identifyResult => {
+              if (identifyResult.success) {
+                logger.info('start-backup', `Auto-identification completed for ${discName}`, {
+                  title: identifyResult.metadata?.final?.title || identifyResult.metadata?.llmGuess?.title
+                });
+                // Notify renderer of metadata update
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                  mainWindow.webContents.send('metadata-updated', { path: result.path });
+                }
+              } else {
+                logger.warn('start-backup', `Auto-identification failed for ${discName}: ${identifyResult.error}`);
+              }
+            })
+            .catch(err => {
+              logger.error('start-backup', `Auto-identification error for ${discName}`, err);
+            });
+        } catch (identifyError) {
+          logger.warn('start-backup', `Failed to start auto-identification: ${identifyError.message}`);
+        }
+      }
+
       // Send completion event
       console.log(`[IPC] Sending backup-complete for driveId=${driveId}, success=true`);
       logger.info('start-backup', `Sending backup-complete IPC event`, { driveId, success: true });
@@ -467,6 +496,13 @@ function setupIPC() {
       const makemkv = await getSharedMakeMKV();
       await makemkv.saveSettings(settings);
       logger.info('settings', 'Settings saved', settings);
+
+      // Update TMDB client with new API key if provided
+      if (tmdbClient && settings.tmdbApiKey !== undefined) {
+        tmdbClient.setApiKey(settings.tmdbApiKey);
+        logger.info('settings', 'TMDB API key updated');
+      }
+
       return { success: true };
     } catch (error) {
       logger.error('settings', 'Failed to save settings', error);
@@ -710,7 +746,7 @@ function setupIPC() {
       if (!ollamaManager) {
         return { success: false, error: 'Ollama manager not initialized' };
       }
-      const result = await ollamaManager.pullModel(modelName);
+      const result = await ollamaManager.ensureModel(modelName);
       return { success: result };
     } catch (error) {
       logger.error('metadata', `Failed to pull model ${modelName}`, error);

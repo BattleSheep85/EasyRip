@@ -8,6 +8,7 @@ import { existsSync, createWriteStream, unlinkSync } from 'fs';
 import { mkdir } from 'fs/promises';
 import path from 'path';
 import https from 'https';
+import http from 'http';
 import logger from '../logger.js';
 
 // Create a simple log wrapper with category
@@ -20,8 +21,8 @@ const log = {
 
 // Ollama configuration
 const OLLAMA_DOWNLOAD_URL = 'https://github.com/ollama/ollama/releases/latest/download/OllamaSetup.exe';
-const OLLAMA_API_URL = 'http://localhost:11434';
-const DEFAULT_MODEL = 'mistral';
+const OLLAMA_API_URL = 'http://127.0.0.1:11434';
+const DEFAULT_MODEL = 'llama3.2';
 const HEALTH_CHECK_TIMEOUT = 5000;
 const STARTUP_TIMEOUT = 30000;
 const QUERY_TIMEOUT = 120000; // 2 minutes for LLM response
@@ -92,22 +93,26 @@ export class OllamaManager {
 
   /**
    * Check if Ollama server is running
+   * Uses native http module for reliability in Electron main process
    * @returns {Promise<boolean>}
    */
   async isRunning() {
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT);
-
-      const response = await fetch(`${OLLAMA_API_URL}/api/tags`, {
-        signal: controller.signal
+    return new Promise((resolve) => {
+      const req = http.get(`${OLLAMA_API_URL}/api/tags`, { timeout: HEALTH_CHECK_TIMEOUT }, (res) => {
+        resolve(res.statusCode === 200);
       });
 
-      clearTimeout(timeout);
-      return response.ok;
-    } catch (error) {
-      return false;
-    }
+      req.on('error', (err) => {
+        log.debug(`Health check failed: ${err.message}`);
+        resolve(false);
+      });
+
+      req.on('timeout', () => {
+        log.debug('Health check timed out');
+        req.destroy();
+        resolve(false);
+      });
+    });
   }
 
   /**
@@ -332,20 +337,39 @@ export class OllamaManager {
 
   /**
    * Check if a model is available locally
+   * Uses native http module for reliability in Electron main process
    * @param {string} modelName - Model name to check
    * @returns {Promise<boolean>}
    */
   async hasModel(modelName = this.model) {
-    try {
-      const response = await fetch(`${OLLAMA_API_URL}/api/tags`);
-      if (!response.ok) return false;
+    return new Promise((resolve) => {
+      const req = http.get(`${OLLAMA_API_URL}/api/tags`, { timeout: HEALTH_CHECK_TIMEOUT }, (res) => {
+        if (res.statusCode !== 200) {
+          resolve(false);
+          return;
+        }
 
-      const data = await response.json();
-      const models = data.models || [];
-      return models.some(m => m.name === modelName || m.name.startsWith(`${modelName}:`));
-    } catch {
-      return false;
-    }
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(data);
+            const models = parsed.models || [];
+            const found = models.some(m => m.name === modelName || m.name.startsWith(`${modelName}:`));
+            log.debug(`Model check for ${modelName}: ${found ? 'found' : 'not found'} (available: ${models.map(m => m.name).join(', ')})`);
+            resolve(found);
+          } catch {
+            resolve(false);
+          }
+        });
+      });
+
+      req.on('error', () => resolve(false));
+      req.on('timeout', () => {
+        req.destroy();
+        resolve(false);
+      });
+    });
   }
 
   /**
