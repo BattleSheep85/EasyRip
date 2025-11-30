@@ -765,3 +765,670 @@ body {
   height: 100%;
   margin: 0;
 }
+
+/* ============================================
+   METADATA MANAGER STYLES
+   ============================================ */
+
+/* Extra large modal for metadata manager */
+.modal-xl {
+  width: 1000px;
+  height: 80vh;
+}
+
+.modal-md {
+  width: 600px;
+  max-height: 80vh;
+}
+
+.modal-lg {
+  width: 800px;
+  max-height: 85vh;
+}
+
+/* Extra small button */
+.btn-xs {
+  padding: 2px 6px;
+  font-size: 11px;
+}
+
+/* Metadata Status Bar */
+.metadata-status-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--sap-gray-1);
+  border: 1px solid var(--sap-gray-3);
+  border-radius: 4px;
+  margin-bottom: 12px;
+  gap: 16px;
+}
+
+.status-info {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+}
+
+.status-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-ok { color: var(--sap-success); }
+.status-warn { color: var(--sap-warning); }
+.status-error { color: var(--sap-error); }
+.status-unknown { color: var(--sap-text-light); }
+
+.processing-name {
+  font-style: italic;
+  color: var(--sap-text-light);
+}
+
+/* Progress Indicator */
+.progress-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.progress-stage {
+  font-weight: 600;
+}
+
+.progress-bar-mini {
+  width: 100px;
+  height: 6px;
+  background: var(--sap-gray-3);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.progress-fill-mini {
+  height: 100%;
+  background: var(--sap-blue);
+  transition: width 0.3s ease;
+}
+
+.progress-message {
+  color: var(--sap-text-light);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Metadata Filters */
+.metadata-filters {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.filter-btn {
+  padding: 6px 12px;
+  border: 1px solid var(--sap-gray-3);
+  background: var(--sap-white);
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.filter-btn:hover {
+  background: var(--sap-gray-2);
+}
+
+.filter-btn.active {
+  background: var(--sap-blue);
+  border-color: var(--sap-blue);
+  color: white;
+}
+
+/* Metadata Grid */
+.metadata-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+  overflow: auto;
+  padding: 4px;
+}
+
+/* Metadata Card */
+.metadata-card {
+  background: var(--sap-white);
+  border: 1px solid var(--sap-gray-3);
+  border-radius: 6px;
+  overflow: hidden;
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.metadata-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  transform: translateY(-2px);
+}
+
+/* Card Poster */
+.card-poster {
+  position: relative;
+  height: 220px;
+  background: var(--sap-gray-2);
+  overflow: hidden;
+}
+
+.card-poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.card-poster .no-poster {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, var(--sap-gray-2) 0%, var(--sap-gray-3) 100%);
+}
+
+.disc-icon {
+  font-size: 32px;
+  font-weight: bold;
+  color: var(--sap-gray-4);
+}
+
+.disc-icon-large {
+  font-size: 48px;
+  font-weight: bold;
+  color: var(--sap-gray-4);
+}
+
+/* Metadata Status Badge */
+.metadata-status {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  padding: 3px 8px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.metadata-status.approved {
+  background: var(--sap-success);
+  color: white;
+}
+
+.metadata-status.pending {
+  background: var(--sap-warning);
+  color: white;
+}
+
+.metadata-status.manual {
+  background: var(--sap-blue);
+  color: white;
+}
+
+.metadata-status.error {
+  background: var(--sap-error);
+  color: white;
+}
+
+.metadata-status.unknown {
+  background: var(--sap-gray-4);
+  color: white;
+}
+
+/* Card Info */
+.card-info {
+  padding: 10px;
+}
+
+.card-title {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-year {
+  font-size: 12px;
+  color: var(--sap-text-light);
+  margin-bottom: 4px;
+}
+
+.card-folder {
+  font-size: 10px;
+  color: var(--sap-gray-4);
+  font-family: 'Consolas', monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-confidence {
+  font-size: 10px;
+  color: var(--sap-text-light);
+  margin-top: 4px;
+}
+
+/* Card Actions */
+.card-actions {
+  display: flex;
+  gap: 4px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--sap-gray-2);
+  background: var(--sap-gray-1);
+}
+
+/* Loading and Empty States */
+.loading-indicator {
+  text-align: center;
+  padding: 40px;
+  color: var(--sap-text-light);
+}
+
+.no-backups {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--sap-text-light);
+}
+
+/* ============================================
+   METADATA EDITOR STYLES
+   ============================================ */
+
+.metadata-editor-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.editor-layout {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 20px;
+}
+
+/* Editor Poster Section */
+.editor-poster-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.editor-poster {
+  width: 100%;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.editor-poster.no-poster {
+  height: 280px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, var(--sap-gray-2) 0%, var(--sap-gray-3) 100%);
+  border-radius: 4px;
+}
+
+/* Disc Info */
+.disc-info {
+  background: var(--sap-gray-1);
+  border: 1px solid var(--sap-gray-3);
+  border-radius: 4px;
+  padding: 10px;
+  font-size: 11px;
+}
+
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--sap-gray-2);
+}
+
+.info-row:last-child {
+  border-bottom: none;
+}
+
+.info-row .label {
+  color: var(--sap-text-light);
+}
+
+.info-row .value {
+  font-weight: 600;
+  font-family: 'Consolas', monospace;
+}
+
+/* Editor Form Section */
+.editor-form-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow: auto;
+}
+
+/* Section Headers */
+.editor-form-section h4 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0 0 8px 0;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--sap-gray-3);
+  color: var(--sap-text);
+}
+
+/* LLM Guess Section */
+.llm-guess-section {
+  background: var(--sap-gray-1);
+  border: 1px solid var(--sap-gray-3);
+  border-radius: 4px;
+  padding: 12px;
+}
+
+.llm-guess {
+  font-size: 12px;
+}
+
+.guess-title {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.guess-confidence {
+  color: var(--sap-text-light);
+  margin-bottom: 8px;
+}
+
+.guess-reasoning {
+  font-size: 11px;
+  color: var(--sap-text-light);
+  line-height: 1.4;
+  padding: 8px;
+  background: var(--sap-white);
+  border-radius: 4px;
+}
+
+/* Manual Edit Section */
+.manual-edit-section {
+  background: var(--sap-gray-1);
+  border: 1px solid var(--sap-gray-3);
+  border-radius: 4px;
+  padding: 12px;
+}
+
+.form-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* TMDB Match Section */
+.tmdb-match-section {
+  background: #e6f2ff;
+  border: 1px solid #b3d4ff;
+  border-radius: 4px;
+  padding: 12px;
+}
+
+.tmdb-match {
+  font-size: 12px;
+}
+
+.match-title {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.match-type {
+  color: var(--sap-text-light);
+  margin-bottom: 8px;
+}
+
+.match-overview {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--sap-text);
+  max-height: 60px;
+  overflow: hidden;
+}
+
+/* Candidates Section */
+.candidates-section {
+  background: var(--sap-gray-1);
+  border: 1px solid var(--sap-gray-3);
+  border-radius: 4px;
+  padding: 12px;
+}
+
+.candidates-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.candidate-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 8px;
+  background: var(--sap-white);
+  border: 1px solid var(--sap-gray-3);
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.candidate-info {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.candidate-title {
+  font-weight: 500;
+}
+
+.candidate-year {
+  color: var(--sap-text-light);
+}
+
+.candidate-type {
+  font-size: 10px;
+  padding: 2px 6px;
+  background: var(--sap-gray-2);
+  border-radius: 3px;
+  text-transform: uppercase;
+}
+
+/* Modal Footer Extensions */
+.footer-left {
+  margin-right: auto;
+}
+
+.footer-right {
+  display: flex;
+  gap: 8px;
+}
+
+/* ============================================
+   TMDB SEARCH MODAL STYLES
+   ============================================ */
+
+.tmdb-search-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 400px;
+}
+
+/* Search Form */
+.search-form {
+  margin-bottom: 8px;
+}
+
+.search-inputs {
+  display: flex;
+  gap: 8px;
+}
+
+.search-input {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid var(--sap-gray-3);
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.search-input:focus {
+  outline: none;
+  border-color: var(--sap-blue);
+  box-shadow: 0 0 0 2px var(--sap-blue-light);
+}
+
+.year-input {
+  width: 80px;
+  padding: 8px 12px;
+  border: 1px solid var(--sap-gray-3);
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.year-input:focus {
+  outline: none;
+  border-color: var(--sap-blue);
+  box-shadow: 0 0 0 2px var(--sap-blue-light);
+}
+
+/* Search Results */
+.search-results {
+  flex: 1;
+  overflow: auto;
+}
+
+.results-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.result-item {
+  display: flex;
+  gap: 12px;
+  padding: 10px;
+  background: var(--sap-white);
+  border: 1px solid var(--sap-gray-3);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.result-item:hover {
+  background: var(--sap-blue-light);
+  border-color: var(--sap-blue);
+}
+
+/* Result Poster */
+.result-poster {
+  width: 60px;
+  min-width: 60px;
+  height: 90px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--sap-gray-2);
+}
+
+.result-poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.no-poster-small {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, var(--sap-gray-2) 0%, var(--sap-gray-3) 100%);
+  font-weight: bold;
+  color: var(--sap-gray-4);
+}
+
+/* Result Info */
+.result-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.result-title {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.result-year {
+  font-weight: normal;
+  color: var(--sap-text-light);
+}
+
+.result-type {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.type-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.type-badge.movie {
+  background: #ffd699;
+  color: #8a5a00;
+}
+
+.type-badge.tv {
+  background: #b3d4ff;
+  color: #003d7a;
+}
+
+.result-rating {
+  font-size: 11px;
+  color: #f5c518;
+  font-weight: 600;
+}
+
+.result-overview {
+  font-size: 11px;
+  color: var(--sap-text-light);
+  line-height: 1.4;
+}
+
+.result-action {
+  display: flex;
+  align-items: center;
+}
+
+.no-results {
+  text-align: center;
+  padding: 40px;
+  color: var(--sap-text-light);
+}
+
+/* Footer Info Extension */
+.footer-info {
+  margin-right: auto;
+}
