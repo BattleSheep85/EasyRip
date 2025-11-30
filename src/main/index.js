@@ -9,12 +9,29 @@ import { MakeMKVAdapter } from './makemkv.js';
 import { DriveDetector } from './drives.js';
 import logger from './logger.js';
 
+// Metadata system imports
+import { getOllamaManager } from './metadata/ollama.js';
+import { getTMDBClient } from './metadata/tmdb.js';
+import { getDiscIdentifier } from './metadata/identifier.js';
+import { getMetadataWatcher, resetMetadataWatcher } from './metadata/watcher.js';
+import { MetadataStatus, createEmptyMetadata } from './metadata/schemas.js';
+
+// Fingerprinting system imports
+import { generateFingerprint, hasUsefulFingerprint } from './metadata/fingerprint.js';
+import { getARMDatabase } from './metadata/arm-database.js';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 let mainWindow = null;
 let driveDetector = null;
 let sharedMakeMKV = null; // Shared instance for non-backup operations
+
+// Metadata system globals
+let ollamaManager = null;
+let tmdbClient = null;
+let discIdentifier = null;
+let metadataWatcher = null;
 
 // PARALLEL BACKUP SYSTEM
 // With --noscan flag, MakeMKV processes can run in parallel because:
@@ -89,6 +106,9 @@ app.whenReady().then(async () => {
   createWindow();
   setupIPC();
 
+  // Initialize metadata system
+  await initializeMetadataSystem();
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
@@ -96,10 +116,105 @@ app.whenReady().then(async () => {
   });
 });
 
+// Initialize metadata system (Ollama, TMDB, watcher)
+async function initializeMetadataSystem() {
+  try {
+    logger.info('metadata', 'Initializing metadata system...');
+
+    // Get settings to check metadata configuration
+    const makemkv = await getSharedMakeMKV();
+    const settings = await makemkv.getSettings();
+    const metadataSettings = settings.metadata || {};
+
+    // Initialize Ollama manager
+    ollamaManager = getOllamaManager();
+    ollamaManager.setProgressCallback((stage, percent, message) => {
+      if (mainWindow) {
+        mainWindow.webContents.send('ollama-progress', { stage, percent, message });
+      }
+    });
+
+    // Check if Ollama is installed and start it
+    if (ollamaManager.isInstalled()) {
+      logger.info('metadata', 'Ollama found, starting server...');
+      const started = await ollamaManager.start();
+      if (started) {
+        // Ensure model is available
+        const hasModel = await ollamaManager.hasModel(metadataSettings.ollamaModel || 'mistral');
+        if (!hasModel) {
+          logger.info('metadata', 'Model not found, will pull on first use');
+        }
+      }
+    } else {
+      logger.info('metadata', 'Ollama not installed, will install on first use');
+    }
+
+    // Initialize TMDB client
+    tmdbClient = getTMDBClient();
+    if (metadataSettings.tmdbApiKey) {
+      tmdbClient.setApiKey(metadataSettings.tmdbApiKey);
+      logger.info('metadata', 'TMDB API key configured');
+    } else {
+      logger.info('metadata', 'TMDB API key not configured');
+    }
+
+    // Initialize disc identifier
+    discIdentifier = getDiscIdentifier();
+
+    // Initialize metadata watcher (if enabled)
+    if (metadataSettings.enabled !== false) {
+      const backupPath = path.join(makemkv.basePath, 'backup');
+      metadataWatcher = getMetadataWatcher(backupPath, {
+        intervalMs: metadataSettings.watcherIntervalMs || 30000,
+        onPending: (backup) => {
+          if (mainWindow) {
+            mainWindow.webContents.send('metadata-pending', backup);
+          }
+        },
+        onError: (error, backupName) => {
+          logger.error('metadata', `Identification error for ${backupName}: ${error}`);
+        }
+      });
+      metadataWatcher.setOnProgress((stage, percent, message) => {
+        if (mainWindow) {
+          mainWindow.webContents.send('ollama-progress', { stage, percent, message });
+        }
+      });
+      metadataWatcher.start();
+      logger.info('metadata', 'Metadata watcher started');
+    }
+
+    logger.info('metadata', 'Metadata system initialized');
+  } catch (error) {
+    logger.error('metadata', 'Failed to initialize metadata system', error);
+  }
+}
+
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+// Cleanup on quit
+app.on('before-quit', async () => {
+  logger.info('app', 'Shutting down...');
+
+  // Stop metadata watcher
+  if (metadataWatcher) {
+    metadataWatcher.stop();
+  }
+
+  // Stop Ollama server (if we started it)
+  if (ollamaManager) {
+    try {
+      await ollamaManager.stop();
+    } catch (error) {
+      logger.error('app', 'Error stopping Ollama', error);
+    }
+  }
+
+  logger.info('app', 'Cleanup complete');
 });
 
 // Set up Inter-Process Communication (IPC) handlers
@@ -166,7 +281,7 @@ function setupIPC() {
 
   // Start backup for a specific drive (PARALLEL - all drives run simultaneously!)
   // With --noscan flag, each MakeMKV process targets its disc:N directly without conflicts.
-  ipcMain.handle('start-backup', async (event, driveId, makemkvIndex, discName, discSize) => {
+  ipcMain.handle('start-backup', async (event, driveId, makemkvIndex, discName, discSize, driveLetter) => {
     // Check if already running for this drive
     if (runningBackups.has(driveId)) {
       logger.warn('start-backup', `Backup already running for drive ${driveId}`);
@@ -177,28 +292,63 @@ function setupIPC() {
       driveId,
       makemkvIndex,
       discSize,
+      driveLetter,
       totalRunning: runningBackups.size
     });
 
-    // Notify UI that backup is starting
-    mainWindow.webContents.send('backup-started', { driveId });
+    // FINGERPRINTING: Capture disc fingerprint BEFORE MakeMKV runs
+    // This is critical because MakeMKV extraction modifies file timestamps
+    let fingerprint = null;
+    if (driveLetter) {
+      try {
+        logger.info('start-backup', `Capturing fingerprint from ${driveLetter}:...`);
+        fingerprint = await generateFingerprint(`${driveLetter}:`, discName);
+
+        // Check ARM database for matches
+        if (fingerprint.crc64) {
+          const armDb = getARMDatabase();
+          const armMatch = await armDb.lookup(fingerprint.crc64);
+          if (armMatch) {
+            fingerprint.armMatch = armMatch;
+            logger.info('start-backup', `ARM database match: "${armMatch.title}" (${armMatch.year})`);
+            mainWindow.webContents.send('fingerprint-match', { driveId, match: armMatch });
+          }
+        }
+
+        if (hasUsefulFingerprint(fingerprint)) {
+          logger.info('start-backup', `Fingerprint captured: ${fingerprint.type}`, {
+            crc64: fingerprint.crc64 || null,
+            contentId: fingerprint.contentId || null,
+            embeddedTitle: fingerprint.embeddedTitle || null
+          });
+        }
+      } catch (error) {
+        logger.warn('start-backup', `Fingerprint capture failed: ${error.message}`);
+        fingerprint = { type: 'unknown', error: error.message, capturedAt: new Date().toISOString() };
+      }
+    } else {
+      logger.warn('start-backup', 'No drive letter provided, skipping fingerprint capture');
+    }
+
+    // Notify UI that backup is starting (include fingerprint info)
+    mainWindow.webContents.send('backup-started', { driveId, fingerprint });
 
     // Create new MakeMKV adapter for this backup
     const makemkv = new MakeMKVAdapter();
     await makemkv.loadSettings();
 
-    // Track this backup
-    runningBackups.set(driveId, { makemkv, discName });
+    // Track this backup (include fingerprint)
+    runningBackups.set(driveId, { makemkv, discName, fingerprint });
 
     // Run backup in background (don't await - let it run parallel)
-    runBackup(driveId, makemkv, makemkvIndex, discName, discSize);
+    runBackup(driveId, makemkv, makemkvIndex, discName, discSize, fingerprint);
 
     // Return immediately - progress comes via IPC events
-    return { success: true, driveId, started: true };
+    return { success: true, driveId, started: true, fingerprint };
   });
 
   // Run a single backup (called in parallel for each drive)
-  async function runBackup(driveId, makemkv, makemkvIndex, discName, discSize) {
+  async function runBackup(driveId, makemkv, makemkvIndex, discName, discSize, fingerprint = null) {
     try {
       const result = await makemkv.startBackup(makemkvIndex, discName, discSize,
         // Progress callback
@@ -217,12 +367,49 @@ function setupIPC() {
         path: result.path
       });
 
+      // Store fingerprint with metadata after successful backup
+      if (fingerprint && !fingerprint.error && result.path && discIdentifier) {
+        try {
+          logger.info('start-backup', `Storing fingerprint with metadata for ${discName}`);
+
+          // Load or create metadata
+          let metadata = await discIdentifier.loadMetadata(result.path);
+          if (!metadata) {
+            metadata = createEmptyMetadata({ volumeLabel: discName });
+          }
+
+          // Store fingerprint data
+          metadata.fingerprint = {
+            type: fingerprint.type || null,
+            capturedAt: fingerprint.capturedAt || new Date().toISOString(),
+            crc64: fingerprint.crc64 || null,
+            contentId: fingerprint.contentId || null,
+            discId: fingerprint.discId || null,
+            organizationId: fingerprint.organizationId || null,
+            embeddedTitle: fingerprint.embeddedTitle || null,
+            armMatch: fingerprint.armMatch || null
+          };
+
+          await discIdentifier.saveMetadata(result.path, metadata);
+          logger.info('start-backup', `Fingerprint stored for ${discName}`);
+
+          // If we have an ARM match, add to cache for future discs
+          if (fingerprint.crc64 && fingerprint.armMatch) {
+            const armDb = getARMDatabase();
+            await armDb.addToCache(fingerprint.crc64, fingerprint.armMatch);
+          }
+        } catch (metaError) {
+          logger.warn('start-backup', `Failed to store fingerprint: ${metaError.message}`);
+        }
+      }
+
       // Send completion event
       console.log(`[IPC] Sending backup-complete for driveId=${driveId}, success=true`);
       logger.info('start-backup', `Sending backup-complete IPC event`, { driveId, success: true });
       mainWindow.webContents.send('backup-complete', {
         driveId,
         success: true,
+        fingerprint,
         ...result
       });
 
@@ -327,6 +514,255 @@ function setupIPC() {
       await shell.openPath(backupDir);
       return { success: true, path: backupDir };
     } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // ============================================
+  // METADATA SYSTEM IPC HANDLERS
+  // ============================================
+
+  // Get all backups with metadata status
+  ipcMain.handle('get-all-backups', async () => {
+    try {
+      if (!metadataWatcher) {
+        return { success: false, error: 'Metadata watcher not initialized' };
+      }
+      const backups = await metadataWatcher.getAllBackups();
+      return { success: true, backups };
+    } catch (error) {
+      logger.error('metadata', 'Failed to get all backups', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Get metadata for a specific backup
+  ipcMain.handle('get-backup-metadata', async (event, backupName) => {
+    try {
+      if (!discIdentifier) {
+        return { success: false, error: 'Disc identifier not initialized' };
+      }
+      const makemkv = await getSharedMakeMKV();
+      const backupPath = path.join(makemkv.basePath, 'backup', backupName);
+      const metadata = await discIdentifier.loadMetadata(backupPath);
+      return { success: true, metadata };
+    } catch (error) {
+      logger.error('metadata', `Failed to get metadata for ${backupName}`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Manually trigger identification for a backup
+  ipcMain.handle('identify-backup', async (event, backupName) => {
+    try {
+      if (!metadataWatcher) {
+        return { success: false, error: 'Metadata watcher not initialized' };
+      }
+      const result = await metadataWatcher.identifyBackup(backupName);
+      return result;
+    } catch (error) {
+      logger.error('metadata', `Failed to identify ${backupName}`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Re-identify a backup (force refresh)
+  ipcMain.handle('reidentify-backup', async (event, backupName) => {
+    try {
+      if (!metadataWatcher) {
+        return { success: false, error: 'Metadata watcher not initialized' };
+      }
+      const result = await metadataWatcher.reidentify(backupName);
+      return result;
+    } catch (error) {
+      logger.error('metadata', `Failed to reidentify ${backupName}`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Approve metadata (user confirms it's correct)
+  ipcMain.handle('approve-metadata', async (event, backupName) => {
+    try {
+      if (!discIdentifier) {
+        return { success: false, error: 'Disc identifier not initialized' };
+      }
+      const makemkv = await getSharedMakeMKV();
+      const backupPath = path.join(makemkv.basePath, 'backup', backupName);
+      const result = await discIdentifier.approve(backupPath);
+      return result;
+    } catch (error) {
+      logger.error('metadata', `Failed to approve ${backupName}`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Update metadata manually
+  ipcMain.handle('update-metadata', async (event, backupName, updates) => {
+    try {
+      if (!discIdentifier) {
+        return { success: false, error: 'Disc identifier not initialized' };
+      }
+      const makemkv = await getSharedMakeMKV();
+      const backupPath = path.join(makemkv.basePath, 'backup', backupName);
+      const result = await discIdentifier.update(backupPath, updates);
+      return result;
+    } catch (error) {
+      logger.error('metadata', `Failed to update ${backupName}`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Select a TMDB candidate
+  ipcMain.handle('select-tmdb-candidate', async (event, backupName, tmdbId, mediaType) => {
+    try {
+      if (!discIdentifier) {
+        return { success: false, error: 'Disc identifier not initialized' };
+      }
+      const makemkv = await getSharedMakeMKV();
+      const backupPath = path.join(makemkv.basePath, 'backup', backupName);
+      const result = await discIdentifier.selectCandidate(backupPath, tmdbId, mediaType);
+      return result;
+    } catch (error) {
+      logger.error('metadata', `Failed to select candidate for ${backupName}`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Search TMDB
+  ipcMain.handle('search-tmdb', async (event, query, year = null) => {
+    try {
+      if (!tmdbClient) {
+        return { success: false, error: 'TMDB client not initialized' };
+      }
+      if (!tmdbClient.hasApiKey()) {
+        return { success: false, error: 'TMDB API key not configured' };
+      }
+      const results = await tmdbClient.searchMulti(query, year);
+      return { success: true, results };
+    } catch (error) {
+      logger.error('metadata', `TMDB search failed for "${query}"`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Get TMDB details
+  ipcMain.handle('get-tmdb-details', async (event, tmdbId, mediaType) => {
+    try {
+      if (!tmdbClient) {
+        return { success: false, error: 'TMDB client not initialized' };
+      }
+      if (!tmdbClient.hasApiKey()) {
+        return { success: false, error: 'TMDB API key not configured' };
+      }
+      const details = await tmdbClient.getDetails(tmdbId, mediaType);
+      return { success: true, details };
+    } catch (error) {
+      logger.error('metadata', `TMDB details failed for ${mediaType}/${tmdbId}`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Get Ollama status
+  ipcMain.handle('get-ollama-status', async () => {
+    try {
+      if (!ollamaManager) {
+        return { success: true, status: { installed: false, running: false, hasModel: false } };
+      }
+      const status = await ollamaManager.getStatus();
+      return { success: true, status };
+    } catch (error) {
+      logger.error('metadata', 'Failed to get Ollama status', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Install Ollama
+  ipcMain.handle('install-ollama', async () => {
+    try {
+      if (!ollamaManager) {
+        return { success: false, error: 'Ollama manager not initialized' };
+      }
+      const result = await ollamaManager.install();
+      return { success: result };
+    } catch (error) {
+      logger.error('metadata', 'Failed to install Ollama', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Start Ollama
+  ipcMain.handle('start-ollama', async () => {
+    try {
+      if (!ollamaManager) {
+        return { success: false, error: 'Ollama manager not initialized' };
+      }
+      const result = await ollamaManager.start();
+      return { success: result };
+    } catch (error) {
+      logger.error('metadata', 'Failed to start Ollama', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Pull Ollama model
+  ipcMain.handle('pull-ollama-model', async (event, modelName) => {
+    try {
+      if (!ollamaManager) {
+        return { success: false, error: 'Ollama manager not initialized' };
+      }
+      const result = await ollamaManager.pullModel(modelName);
+      return { success: result };
+    } catch (error) {
+      logger.error('metadata', `Failed to pull model ${modelName}`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Get metadata watcher queue status
+  ipcMain.handle('get-metadata-queue', async () => {
+    try {
+      if (!metadataWatcher) {
+        return { success: true, queue: { queueLength: 0, processing: null, isScanning: false } };
+      }
+      const queue = metadataWatcher.getQueueStatus();
+      return { success: true, queue };
+    } catch (error) {
+      logger.error('metadata', 'Failed to get queue status', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Force scan for new backups
+  ipcMain.handle('scan-backups', async () => {
+    try {
+      if (!metadataWatcher) {
+        return { success: false, error: 'Metadata watcher not initialized' };
+      }
+      const results = await metadataWatcher.scanOnce();
+      return { success: true, found: results.length };
+    } catch (error) {
+      logger.error('metadata', 'Failed to scan backups', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Validate TMDB API key
+  ipcMain.handle('validate-tmdb-key', async (event, apiKey) => {
+    try {
+      if (!tmdbClient) {
+        return { success: false, error: 'TMDB client not initialized' };
+      }
+      // Temporarily set the key to test it
+      const originalKey = tmdbClient.apiKey;
+      tmdbClient.setApiKey(apiKey);
+      const valid = await tmdbClient.validateApiKey();
+      // Restore original if validation failed
+      if (!valid) {
+        tmdbClient.setApiKey(originalKey);
+      }
+      return { success: true, valid };
+    } catch (error) {
+      logger.error('metadata', 'TMDB key validation failed', error);
       return { success: false, error: error.message };
     }
   });

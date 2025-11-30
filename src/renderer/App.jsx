@@ -1,6 +1,9 @@
 // Main App Component - SAP-Style Compact UI
 import React, { useState, useEffect, useRef } from 'react';
 import { formatSize, sanitizeDiscName } from '../shared/utils.js';
+import MetadataManager from './MetadataManager.jsx';
+import MetadataEditor from './MetadataEditor.jsx';
+import TMDBSearchModal from './TMDBSearchModal.jsx';
 
 function App() {
   const [drives, setDrives] = useState([]);
@@ -19,6 +22,11 @@ function App() {
   const [editedSettings, setEditedSettings] = useState(null);
   const logEndRef = useRef(null);
   const initRef = useRef(false); // Prevent double init in React StrictMode
+
+  // Metadata modal state
+  const [showMetadata, setShowMetadata] = useState(false);
+  const [editingBackup, setEditingBackup] = useState(null);
+  const [tmdbSearch, setTmdbSearch] = useState(null); // { query, year, onSelect }
 
   // Load settings and set up listeners on mount
   useEffect(() => {
@@ -297,7 +305,7 @@ function App() {
     setActiveLogTab(drive.id);
 
     try {
-      const result = await window.electronAPI.startBackup(drive.id, drive.makemkvIndex, discName, drive.discSize || 0);
+      const result = await window.electronAPI.startBackup(drive.id, drive.makemkvIndex, discName, drive.discSize || 0, drive.driveLetter);
 
       if (result.success) {
         // Backup started (parallel mode) or was queued - status updates come via IPC events
@@ -399,6 +407,9 @@ function App() {
           <h1>EasyRip</h1>
         </div>
         <div className="header-actions">
+          <button className="btn btn-sm" onClick={() => setShowMetadata(true)} title="Manage backup metadata">
+            Metadata
+          </button>
           <button className="btn btn-sm" onClick={handleOpenBackupDir} title="Open backup folder">
             Backups
           </button>
@@ -674,6 +685,40 @@ function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Metadata Manager Modal */}
+      {showMetadata && (
+        <MetadataManager
+          onClose={() => setShowMetadata(false)}
+          onEdit={(backupName) => {
+            setEditingBackup(backupName);
+          }}
+        />
+      )}
+
+      {/* Metadata Editor Modal */}
+      {editingBackup && (
+        <MetadataEditor
+          backupName={editingBackup}
+          onClose={() => setEditingBackup(null)}
+          onSave={() => {
+            // Refresh metadata manager if open
+          }}
+          onSearchTMDB={(query, year, onSelect) => {
+            setTmdbSearch({ query, year, onSelect });
+          }}
+        />
+      )}
+
+      {/* TMDB Search Modal */}
+      {tmdbSearch && (
+        <TMDBSearchModal
+          initialQuery={tmdbSearch.query}
+          initialYear={tmdbSearch.year}
+          onSelect={tmdbSearch.onSelect}
+          onClose={() => setTmdbSearch(null)}
+        />
       )}
     </div>
   );
