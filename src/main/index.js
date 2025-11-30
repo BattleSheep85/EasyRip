@@ -301,8 +301,8 @@ function setupIPC() {
     let fingerprint = null;
     if (driveLetter) {
       try {
-        logger.info('start-backup', `Capturing fingerprint from ${driveLetter}:...`);
-        fingerprint = await generateFingerprint(`${driveLetter}:`, discName);
+        logger.info('start-backup', `Capturing fingerprint from ${driveLetter}...`);
+        fingerprint = await generateFingerprint(driveLetter, discName);
 
         // Check ARM database for matches
         if (fingerprint.crc64) {
