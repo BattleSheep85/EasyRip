@@ -19,6 +19,8 @@ export class MakeMKVAdapter {
     this._settingsLoaded = false;
     this.lastError = null;
     this.tmdbApiKey = '';
+    this.transfer = null; // Transfer settings (protocol, host, paths)
+    this.automation = { autoBackup: false, autoMeta: true, autoExport: false, liveDangerously: false, ejectAfterBackup: false }; // Automation toggles
   }
 
   // Load saved settings from disk
@@ -30,20 +32,36 @@ export class MakeMKVAdapter {
       this.makemkvPath = settings.makemkvPath || this.makemkvPath;
       this.basePath = settings.basePath || 'D:\\EasyRip';
       this.tmdbApiKey = settings.tmdbApiKey || '';
+      this.transfer = settings.transfer || null;
+      this.automation = settings.automation || { autoBackup: false, autoMeta: true, autoExport: false, liveDangerously: false, ejectAfterBackup: false };
     } catch {
       // Settings file doesn't exist yet, use defaults
       this.basePath = 'D:\\EasyRip';
       this.tmdbApiKey = '';
+      this.transfer = null;
+      this.automation = { autoBackup: false, autoMeta: true, autoExport: false, liveDangerously: false, ejectAfterBackup: false };
     }
     this._settingsLoaded = true;
   }
 
-  // Get current settings
+  // Get current settings (always read fresh from file for transfer settings)
   async getSettings() {
+    // Re-read transfer/automation settings from file to pick up changes without restart
+    try {
+      const data = await fs.readFile(this.settingsPath, 'utf8');
+      const settings = JSON.parse(data);
+      this.transfer = settings.transfer || null;
+      this.automation = settings.automation || { autoBackup: false, autoMeta: true, autoExport: false, liveDangerously: false, ejectAfterBackup: false };
+    } catch {
+      // If file read fails, keep existing cached values
+    }
+
     return {
       makemkvPath: this.makemkvPath,
       basePath: this.basePath,
       tmdbApiKey: this.tmdbApiKey,
+      transfer: this.transfer,
+      automation: this.automation,
     };
   }
 
@@ -52,6 +70,8 @@ export class MakeMKVAdapter {
     this.makemkvPath = settings.makemkvPath || this.makemkvPath;
     this.basePath = settings.basePath || this.basePath;
     this.tmdbApiKey = settings.tmdbApiKey || '';
+    this.transfer = settings.transfer || null;
+    this.automation = settings.automation || { autoBackup: false, autoMeta: true, autoExport: false, liveDangerously: false, ejectAfterBackup: false };
 
     await fs.writeFile(
       this.settingsPath,

@@ -4,6 +4,7 @@ import { formatSize, sanitizeDiscName } from '../shared/utils.js';
 import MetadataManager from './MetadataManager.jsx';
 import MetadataEditor from './MetadataEditor.jsx';
 import TMDBSearchModal from './TMDBSearchModal.jsx';
+import ExportManager from './ExportManager.jsx';
 
 function App() {
   const [drives, setDrives] = useState([]);
@@ -25,8 +26,26 @@ function App() {
 
   // Metadata modal state
   const [showMetadata, setShowMetadata] = useState(false);
+  const [showExportManager, setShowExportManager] = useState(false);
   const [editingBackup, setEditingBackup] = useState(null);
   const [tmdbSearch, setTmdbSearch] = useState(null); // { query, year, onSelect }
+  const [metadataRefreshKey, setMetadataRefreshKey] = useState(0); // Increment to trigger MetadataManager reload
+
+  // Export state
+  const [exportStatus, setExportStatus] = useState(null); // { backupName, percent, stage }
+  const [exportQueue, setExportQueue] = useState({ queueLength: 0, processing: null, queue: [] });
+
+  // Confirmation dialog state for Re-Do
+  const [confirmRedo, setConfirmRedo] = useState(null); // { drive } or null
+
+  // Automation toggles state
+  const [automation, setAutomation] = useState({
+    autoBackup: false,
+    autoMeta: true,
+    autoExport: false,
+    liveDangerously: false,
+    ejectAfterBackup: false
+  });
 
   // Load settings and set up listeners on mount
   useEffect(() => {
@@ -45,6 +64,7 @@ function App() {
 
     if (isFirstMount) {
       loadSettings();
+      loadAutomation();
 
       // Clean up any orphan temp folders on startup, THEN scan drives
       window.electronAPI.cleanupOrphanTemps().then(result => {
@@ -146,9 +166,41 @@ function App() {
 
     // Note: handleScanDrives() is now called inside cleanupOrphanTemps callback above
 
+    // Listen for export progress
+    window.electronAPI.onExportProgress((data) => {
+      setExportStatus({
+        backupName: data.backupName,
+        percent: data.percent,
+        stage: data.stage
+      });
+    });
+
+    // Listen for export completion
+    window.electronAPI.onExportComplete((data) => {
+      setExportStatus(null);
+      // Refresh queue status
+      refreshExportQueue();
+    });
+
+    // Listen for export errors
+    window.electronAPI.onExportError((data) => {
+      setExportStatus({
+        backupName: data.name,
+        percent: 0,
+        stage: `Error: ${data.error}`,
+        isError: true
+      });
+      // Clear error status after 5 seconds
+      setTimeout(() => setExportStatus(null), 5000);
+    });
+
+    // Initial queue status load
+    refreshExportQueue();
+
     return () => {
       if (window.electronAPI) {
         window.electronAPI.removeBackupListeners();
+        window.electronAPI.removeExportListeners();
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -171,6 +223,42 @@ function App() {
       }
     } catch (err) {
       console.error('Failed to load settings:', err);
+    }
+  }
+
+  async function loadAutomation() {
+    if (!window.electronAPI) return;
+    try {
+      const result = await window.electronAPI.getAutomation();
+      if (result.success) {
+        setAutomation(result.automation);
+      }
+    } catch (err) {
+      console.error('Failed to load automation settings:', err);
+    }
+  }
+
+  async function handleToggleAutomation(key) {
+    if (!window.electronAPI) return;
+    try {
+      const result = await window.electronAPI.toggleAutomation(key);
+      if (result.success) {
+        setAutomation(result.automation);
+      }
+    } catch (err) {
+      console.error('Failed to toggle automation:', err);
+    }
+  }
+
+  async function refreshExportQueue() {
+    if (!window.electronAPI) return;
+    try {
+      const result = await window.electronAPI.getExportQueueStatus();
+      if (result.success) {
+        setExportQueue(result.status);
+      }
+    } catch (err) {
+      console.error('Failed to get export queue status:', err);
     }
   }
 
@@ -351,6 +439,77 @@ function App() {
     }
   }
 
+  // Re-Do backup - shows confirmation dialog (unless Live Dangerously mode)
+  function handleRedoClick(drive) {
+    if (automation.liveDangerously) {
+      // Skip confirmation in YOLO mode - proceed directly
+      performRedo(drive);
+    } else {
+      setConfirmRedo({ drive });
+    }
+  }
+
+  // Actually perform the re-do (shared by confirmation and YOLO mode)
+  async function performRedo(drive) {
+    if (!window.electronAPI) return;
+
+    const discName = sanitizeDiscName(drive.discName);
+
+    // Update state to running
+    setDriveStates(prev => ({
+      ...prev,
+      [drive.id]: { status: 'running', progress: 0 }
+    }));
+
+    // Clear previous logs
+    setDriveLogs(prev => ({
+      ...prev,
+      [drive.id]: [`RE-DO: Deleting existing backup and starting fresh...`, `Disc: ${drive.discName}`, `Size: ${formatSize(drive.discSize)}`]
+    }));
+
+    // Switch to this drive's log tab
+    setActiveLogTab(drive.id);
+
+    try {
+      const result = await window.electronAPI.deleteAndRestartBackup(
+        drive.id,
+        drive.makemkvIndex,
+        discName,
+        drive.discSize || 0,
+        drive.driveLetter
+      );
+
+      if (!result.success) {
+        setDriveStates(prev => ({
+          ...prev,
+          [drive.id]: { status: 'error', progress: 0, error: result.error }
+        }));
+        setDriveLogs(prev => ({
+          ...prev,
+          [drive.id]: [...(prev[drive.id] || []), `ERROR: ${result.error}`]
+        }));
+      }
+      // Success - progress updates come via IPC events
+    } catch (err) {
+      setDriveStates(prev => ({
+        ...prev,
+        [drive.id]: { status: 'error', progress: 0, error: err.message }
+      }));
+      setDriveLogs(prev => ({
+        ...prev,
+        [drive.id]: [...(prev[drive.id] || []), `ERROR: ${err.message}`]
+      }));
+    }
+  }
+
+  // Confirm Re-Do - deletes existing backup and starts fresh
+  function handleConfirmRedo() {
+    if (!confirmRedo) return;
+    const drive = confirmRedo.drive;
+    setConfirmRedo(null);
+    performRedo(drive);
+  }
+
   // Backup all drives concurrently
   async function handleBackupAll() {
     const eligibleDrives = drives.filter(d => {
@@ -410,6 +569,9 @@ function App() {
           <button className="btn btn-sm" onClick={() => setShowMetadata(true)} title="Manage backup metadata">
             Metadata
           </button>
+          <button className="btn btn-sm" onClick={() => setShowExportManager(true)} title="Export queue and remux status">
+            Export
+          </button>
           <button className="btn btn-sm" onClick={handleOpenBackupDir} title="Open backup folder">
             Backups
           </button>
@@ -454,6 +616,49 @@ function App() {
           <span className="toolbar-info">
             {drives.length} disc(s) | {runningCount} running | {queuedCount > 0 ? `${queuedCount} queued | ` : ''}{completeCount} done | {readyCount} ready
           </span>
+
+          <div className="toolbar-separator"></div>
+
+          {/* Automation Toggles */}
+          <div className="automation-toggles">
+            <span className="automation-label">Auto:</span>
+            <button
+              className={`btn btn-xs btn-toggle ${automation.autoBackup ? 'active' : ''}`}
+              onClick={() => handleToggleAutomation('autoBackup')}
+              title="Auto-backup when disc inserted"
+            >
+              Backup
+            </button>
+            <button
+              className={`btn btn-xs btn-toggle ${automation.autoMeta ? 'active' : ''}`}
+              onClick={() => handleToggleAutomation('autoMeta')}
+              title="Auto-identify metadata for new backups"
+            >
+              Meta
+            </button>
+            <button
+              className={`btn btn-xs btn-toggle ${automation.autoExport ? 'active' : ''}`}
+              onClick={() => handleToggleAutomation('autoExport')}
+              title="Auto-export approved backups"
+            >
+              Export
+            </button>
+            <button
+              className={`btn btn-xs btn-toggle ${automation.ejectAfterBackup ? 'active' : ''}`}
+              onClick={() => handleToggleAutomation('ejectAfterBackup')}
+              title="Auto-eject disc after successful backup"
+            >
+              Eject
+            </button>
+            <span className="automation-separator">|</span>
+            <button
+              className={`btn btn-xs btn-toggle btn-danger-toggle ${automation.liveDangerously ? 'active' : ''}`}
+              onClick={() => handleToggleAutomation('liveDangerously')}
+              title="Live Dangerously: Skip all confirmations and auto-approve everything"
+            >
+              YOLO
+            </button>
+          </div>
         </div>
 
         {/* Drives Table */}
@@ -551,9 +756,9 @@ function App() {
                             </button>
                           ) : state.status === 'exists' ? (
                             <button
-                              onClick={() => handleStartBackup(drive)}
-                              className="btn btn-sm"
-                              title="Backup already exists - click to re-backup"
+                              onClick={() => handleRedoClick(drive)}
+                              className="btn btn-sm btn-warning"
+                              title="Delete existing backup and re-backup from disc"
                             >
                               Re-do
                             </button>
@@ -625,6 +830,27 @@ function App() {
       {/* Footer */}
       <footer className="app-footer">
         <span>Base: {settings.basePath}</span>
+        {/* Export Progress */}
+        {exportStatus && (
+          <div className={`footer-export ${exportStatus.isError ? 'error' : ''}`}>
+            <span className="export-label">Export:</span>
+            <span className="export-name">{exportStatus.backupName}</span>
+            <div className="export-progress-bar">
+              <div
+                className={`export-progress-fill ${exportStatus.isError ? 'error' : ''}`}
+                style={{ width: `${exportStatus.percent || 0}%` }}
+              ></div>
+            </div>
+            <span className="export-percent">{Math.round(exportStatus.percent || 0)}%</span>
+            <span className="export-stage">{exportStatus.stage}</span>
+          </div>
+        )}
+        {/* Export Queue Status */}
+        {!exportStatus && exportQueue.queueLength > 0 && (
+          <div className="footer-export-queue">
+            <span>Export Queue: {exportQueue.queueLength} pending</span>
+          </div>
+        )}
         <span>Temp: {settings.basePath}\temp | Backup: {settings.basePath}\backup</span>
       </footer>
 
@@ -667,6 +893,240 @@ function App() {
                 />
                 <small>Get a free API key at <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer" style={{color: '#4da6ff'}}>themoviedb.org</a></small>
               </div>
+              <hr style={{margin: '16px 0', borderColor: '#3d3d3d'}} />
+              <h4 style={{margin: '0 0 12px 0', color: '#888'}}>Transfer Settings</h4>
+
+              {/* Protocol Selection */}
+              <div className="form-group">
+                <label>Transfer Protocol:</label>
+                <div className="radio-group">
+                  {[
+                    { value: 'local', label: 'Local', desc: 'Copy to local folder' },
+                    { value: 'unc', label: 'UNC/SMB', desc: 'Windows network share' },
+                    { value: 'sftp', label: 'SFTP', desc: 'SSH File Transfer' },
+                    { value: 'scp', label: 'SCP', desc: 'SSH Copy' },
+                    { value: 'ftp', label: 'FTP', desc: 'File Transfer Protocol' },
+                  ].map(proto => (
+                    <label key={proto.value} className="radio-label">
+                      <input
+                        type="radio"
+                        name="transferProtocol"
+                        value={proto.value}
+                        checked={(editedSettings?.transfer?.protocol || 'local') === proto.value}
+                        onChange={e => setEditedSettings({
+                          ...editedSettings,
+                          transfer: { ...editedSettings?.transfer, protocol: e.target.value }
+                        })}
+                      />
+                      <span className="radio-text">
+                        <strong>{proto.label}</strong>
+                        <small>{proto.desc}</small>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* SSH/FTP Host Settings */}
+              {['sftp', 'scp', 'ftp'].includes(editedSettings?.transfer?.protocol) && (
+                <>
+                  <div className="form-row">
+                    <div className="form-group flex-grow">
+                      <label>Host:</label>
+                      <input
+                        type="text"
+                        value={editedSettings?.transfer?.host || ''}
+                        onChange={e => setEditedSettings({
+                          ...editedSettings,
+                          transfer: { ...editedSettings?.transfer, host: e.target.value }
+                        })}
+                        placeholder="192.168.1.100 or server.local"
+                      />
+                    </div>
+                    <div className="form-group" style={{width: '100px'}}>
+                      <label>Port:</label>
+                      <input
+                        type="number"
+                        value={editedSettings?.transfer?.port || (editedSettings?.transfer?.protocol === 'ftp' ? 21 : 22)}
+                        onChange={e => setEditedSettings({
+                          ...editedSettings,
+                          transfer: { ...editedSettings?.transfer, port: parseInt(e.target.value) || 22 }
+                        })}
+                      />
+                    </div>
+                  </div>
+                  <div className="form-row">
+                    <div className="form-group flex-grow">
+                      <label>Username:</label>
+                      <input
+                        type="text"
+                        value={editedSettings?.transfer?.username || ''}
+                        onChange={e => setEditedSettings({
+                          ...editedSettings,
+                          transfer: { ...editedSettings?.transfer, username: e.target.value }
+                        })}
+                        placeholder="user"
+                      />
+                    </div>
+                    <div className="form-group flex-grow">
+                      <label>Password:</label>
+                      <input
+                        type="password"
+                        value={editedSettings?.transfer?.password || ''}
+                        onChange={e => setEditedSettings({
+                          ...editedSettings,
+                          transfer: { ...editedSettings?.transfer, password: e.target.value }
+                        })}
+                        placeholder="Password"
+                      />
+                    </div>
+                  </div>
+                  {['sftp', 'scp'].includes(editedSettings?.transfer?.protocol) && (
+                    <div className="form-group">
+                      <label>Private Key Path (optional):</label>
+                      <input
+                        type="text"
+                        value={editedSettings?.transfer?.privateKey || ''}
+                        onChange={e => setEditedSettings({
+                          ...editedSettings,
+                          transfer: { ...editedSettings?.transfer, privateKey: e.target.value }
+                        })}
+                        placeholder="C:\Users\you\.ssh\id_rsa"
+                      />
+                      <small>Use instead of password for key-based auth</small>
+                    </div>
+                  )}
+                  {editedSettings?.transfer?.protocol === 'ftp' && (
+                    <div className="form-group">
+                      <label className="checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={editedSettings?.transfer?.secure || false}
+                          onChange={e => setEditedSettings({
+                            ...editedSettings,
+                            transfer: { ...editedSettings?.transfer, secure: e.target.checked }
+                          })}
+                        />
+                        Use FTPS (TLS/SSL encryption)
+                      </label>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* UNC Path Settings */}
+              {editedSettings?.transfer?.protocol === 'unc' && (
+                <>
+                  <div className="form-group">
+                    <label>UNC Base Path:</label>
+                    <input
+                      type="text"
+                      value={editedSettings?.transfer?.uncPath || ''}
+                      onChange={e => setEditedSettings({
+                        ...editedSettings,
+                        transfer: { ...editedSettings?.transfer, uncPath: e.target.value }
+                      })}
+                      placeholder="\\\\server\\share"
+                    />
+                    <small>Network share path (credentials optional)</small>
+                  </div>
+                  <div className="form-row">
+                    <div className="form-group flex-grow">
+                      <label>Username (optional):</label>
+                      <input
+                        type="text"
+                        value={editedSettings?.transfer?.username || ''}
+                        onChange={e => setEditedSettings({
+                          ...editedSettings,
+                          transfer: { ...editedSettings?.transfer, username: e.target.value }
+                        })}
+                        placeholder="DOMAIN\\user"
+                      />
+                    </div>
+                    <div className="form-group flex-grow">
+                      <label>Password (optional):</label>
+                      <input
+                        type="password"
+                        value={editedSettings?.transfer?.password || ''}
+                        onChange={e => setEditedSettings({
+                          ...editedSettings,
+                          transfer: { ...editedSettings?.transfer, password: e.target.value }
+                        })}
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* Library Paths (all protocols) */}
+              <div className="form-group">
+                <label>Movie Library Path:</label>
+                <input
+                  type="text"
+                  value={editedSettings?.transfer?.moviePath || ''}
+                  onChange={e => setEditedSettings({
+                    ...editedSettings,
+                    transfer: { ...editedSettings?.transfer, moviePath: e.target.value }
+                  })}
+                  placeholder={
+                    ['sftp', 'scp', 'ftp'].includes(editedSettings?.transfer?.protocol)
+                      ? '/media/movies'
+                      : editedSettings?.transfer?.protocol === 'unc'
+                        ? '\\\\NAS\\Emby\\Movies'
+                        : 'D:\\Media\\Movies'
+                  }
+                />
+                <small>
+                  {['sftp', 'scp', 'ftp'].includes(editedSettings?.transfer?.protocol)
+                    ? 'Remote path on the server'
+                    : 'Path to your movie library folder'}
+                </small>
+              </div>
+              <div className="form-group">
+                <label>TV Library Path:</label>
+                <input
+                  type="text"
+                  value={editedSettings?.transfer?.tvPath || ''}
+                  onChange={e => setEditedSettings({
+                    ...editedSettings,
+                    transfer: { ...editedSettings?.transfer, tvPath: e.target.value }
+                  })}
+                  placeholder={
+                    ['sftp', 'scp', 'ftp'].includes(editedSettings?.transfer?.protocol)
+                      ? '/media/tv'
+                      : editedSettings?.transfer?.protocol === 'unc'
+                        ? '\\\\NAS\\Emby\\TV Shows'
+                        : 'D:\\Media\\TV Shows'
+                  }
+                />
+                <small>
+                  {['sftp', 'scp', 'ftp'].includes(editedSettings?.transfer?.protocol)
+                    ? 'Remote path on the server'
+                    : 'Path to your TV library folder'}
+                </small>
+              </div>
+
+              {/* Test Connection Button */}
+              <div className="form-group">
+                <button
+                  className="btn btn-sm"
+                  onClick={async () => {
+                    if (!window.electronAPI) return;
+                    try {
+                      const result = await window.electronAPI.testTransferConnection(editedSettings?.transfer || {});
+                      if (result.success) {
+                        alert('Connection successful: ' + result.message);
+                      } else {
+                        alert('Connection failed: ' + result.message);
+                      }
+                    } catch (err) {
+                      alert('Connection test error: ' + err.message);
+                    }
+                  }}
+                >
+                  Test Connection
+                </button>
+              </div>
             </div>
             <div className="modal-footer">
               <button className="btn" onClick={() => setShowSettings(false)}>Cancel</button>
@@ -705,6 +1165,7 @@ function App() {
           onEdit={(backupName) => {
             setEditingBackup(backupName);
           }}
+          refreshKey={metadataRefreshKey}
         />
       )}
 
@@ -714,7 +1175,8 @@ function App() {
           backupName={editingBackup}
           onClose={() => setEditingBackup(null)}
           onSave={() => {
-            // Refresh metadata manager if open
+            // Trigger MetadataManager refresh
+            setMetadataRefreshKey(prev => prev + 1);
           }}
           onSearchTMDB={(query, year, onSelect) => {
             setTmdbSearch({ query, year, onSelect });
@@ -730,6 +1192,43 @@ function App() {
           onSelect={tmdbSearch.onSelect}
           onClose={() => setTmdbSearch(null)}
         />
+      )}
+
+      {/* Export Manager Modal */}
+      {showExportManager && (
+        <ExportManager onClose={() => setShowExportManager(false)} />
+      )}
+
+      {/* Re-Do Confirmation Dialog */}
+      {confirmRedo && (
+        <div className="modal-overlay" onClick={() => setConfirmRedo(null)}>
+          <div className="modal modal-confirm" onClick={e => e.stopPropagation()}>
+            <div className="modal-header modal-header-warning">
+              <h3>Confirm Re-Do Backup</h3>
+              <button className="modal-close" onClick={() => setConfirmRedo(null)}>X</button>
+            </div>
+            <div className="modal-body">
+              <div className="confirm-warning">
+                <strong>Warning: This action will permanently delete the existing backup!</strong>
+              </div>
+              <div className="confirm-details">
+                <p><strong>Disc:</strong> {confirmRedo.drive.discName}</p>
+                <p><strong>Drive:</strong> {confirmRedo.drive.driveLetter}</p>
+                <p><strong>Size:</strong> {formatSize(confirmRedo.drive.discSize)}</p>
+              </div>
+              <div className="confirm-message">
+                <p>The existing backup folder and all its contents will be deleted, then a fresh backup will be created from the disc.</p>
+                <p>This cannot be undone.</p>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn" onClick={() => setConfirmRedo(null)}>Cancel</button>
+              <button className="btn btn-danger" onClick={handleConfirmRedo}>
+                Delete & Re-Do Backup
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

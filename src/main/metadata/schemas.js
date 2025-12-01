@@ -10,7 +10,8 @@ export const MetadataStatus = {
   PENDING: 'pending',     // Identified but not reviewed
   APPROVED: 'approved',   // User confirmed identification
   MANUAL: 'manual',       // User manually set metadata
-  ERROR: 'error'          // Identification failed
+  ERROR: 'error',         // Identification failed
+  EXPORTED: 'exported'    // Successfully exported to library
 };
 
 // Disc types

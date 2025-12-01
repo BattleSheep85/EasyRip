@@ -23,6 +23,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   startBackup: (driveId, makemkvIndex, discName, discSize, driveLetter) =>
     ipcRenderer.invoke('start-backup', driveId, makemkvIndex, discName, discSize, driveLetter),
 
+  // Delete existing backup and restart fresh (Re-Do functionality)
+  deleteAndRestartBackup: (driveId, makemkvIndex, discName, discSize, driveLetter) =>
+    ipcRenderer.invoke('delete-and-restart-backup', driveId, makemkvIndex, discName, discSize, driveLetter),
+
+  // Delete a backup from the backup folder
+  deleteBackup: (backupName) => ipcRenderer.invoke('delete-backup', backupName),
+
   // Cancel backup for a specific drive
   cancelBackup: (driveId) => ipcRenderer.invoke('cancel-backup', driveId),
 
@@ -102,6 +109,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Get TMDB details
   getTMDBDetails: (tmdbId, mediaType) => ipcRenderer.invoke('get-tmdb-details', tmdbId, mediaType),
 
+  // Get TV season details (episodes list)
+  getTVSeasonDetails: (tvId, seasonNumber) => ipcRenderer.invoke('get-tv-season-details', tvId, seasonNumber),
+
   // Validate TMDB API key
   validateTMDBKey: (apiKey) => ipcRenderer.invoke('validate-tmdb-key', apiKey),
 
@@ -138,4 +148,95 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('metadata-pending');
     ipcRenderer.removeAllListeners('ollama-progress');
   },
+
+  // ============================================
+  // EMBY EXPORT SYSTEM APIs
+  // ============================================
+
+  // Scan backup for available titles (for selection before export)
+  embyScanTitles: (backupName) => ipcRenderer.invoke('emby-scan-titles', backupName),
+
+  // Export backup to Emby library
+  // options: { backupName, titleIndex, mediaType: 'movie'|'tv', tvInfo?: { season, episode } }
+  embyExport: (options) => ipcRenderer.invoke('emby-export', options),
+
+  // Cancel current Emby export
+  embyCancel: () => ipcRenderer.invoke('emby-cancel'),
+
+  // Preview what path/name will be used for export
+  // options: { backupName, mediaType: 'movie'|'tv', tvInfo?: { season, episode } }
+  embyPreview: (options) => ipcRenderer.invoke('emby-preview', options),
+
+  // Listen for Emby export progress
+  onEmbyProgress: (callback) => {
+    ipcRenderer.on('emby-progress', (event, data) => callback(data));
+  },
+
+  // Listen for Emby export log messages
+  onEmbyLog: (callback) => {
+    ipcRenderer.on('emby-log', (event, data) => callback(data));
+  },
+
+  // Remove Emby listeners (cleanup)
+  removeEmbyListeners: () => {
+    ipcRenderer.removeAllListeners('emby-progress');
+    ipcRenderer.removeAllListeners('emby-log');
+  },
+
+  // ============================================
+  // TRANSFER SYSTEM APIs
+  // ============================================
+
+  // Test transfer connection
+  testTransferConnection: (config) => ipcRenderer.invoke('test-transfer-connection', config),
+
+  // Queue a backup for export (manual trigger)
+  queueExport: (backupName) => ipcRenderer.invoke('queue-export', backupName),
+
+  // Get export queue status
+  getExportQueueStatus: () => ipcRenderer.invoke('get-export-queue-status'),
+
+  // Cancel current export
+  cancelExport: () => ipcRenderer.invoke('cancel-export'),
+
+  // Listen for export progress
+  onExportProgress: (callback) => {
+    ipcRenderer.on('export-progress', (event, data) => callback(data));
+  },
+
+  // Listen for export log messages
+  onExportLog: (callback) => {
+    ipcRenderer.on('export-log', (event, data) => callback(data));
+  },
+
+  // Listen for export completion
+  onExportComplete: (callback) => {
+    ipcRenderer.on('export-complete', (event, data) => callback(data));
+  },
+
+  // Listen for export errors
+  onExportError: (callback) => {
+    ipcRenderer.on('export-error', (event, data) => callback(data));
+  },
+
+  // Remove export listeners (cleanup)
+  removeExportListeners: () => {
+    ipcRenderer.removeAllListeners('export-progress');
+    ipcRenderer.removeAllListeners('export-log');
+    ipcRenderer.removeAllListeners('export-complete');
+    ipcRenderer.removeAllListeners('export-error');
+  },
+
+  // ============================================
+  // AUTOMATION SYSTEM APIs
+  // ============================================
+
+  // Get current automation settings
+  getAutomation: () => ipcRenderer.invoke('get-automation'),
+
+  // Toggle a specific automation setting (autoBackup, autoMeta, autoExport)
+  toggleAutomation: (key) => ipcRenderer.invoke('toggle-automation', key),
+
+  // Set all automation settings at once
+  setAutomation: (automation) => ipcRenderer.invoke('set-automation', automation),
 });

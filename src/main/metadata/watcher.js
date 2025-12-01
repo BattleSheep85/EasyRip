@@ -124,12 +124,15 @@ export class MetadataWatcher {
 
     try {
       const entries = readdirSync(this.backupPath, { withFileTypes: true });
+      log.info(`Scanning ${entries.length} entries in backup folder`);
 
       for (const entry of entries) {
         if (!entry.isDirectory()) continue;
 
         const backupDir = path.join(this.backupPath, entry.name);
         const status = await this.checkBackupStatus(backupDir);
+
+        log.debug(`${entry.name}: hasMetadata=${status.hasMetadata}, needsID=${status.needsIdentification}, validBackup=${status.hasVideoTs || status.hasBdmv}`);
 
         if (status.needsIdentification) {
           needsIdentification.push({

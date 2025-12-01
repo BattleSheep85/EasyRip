@@ -1,7 +1,7 @@
 // Electron Main Process
 // This runs in Node.js and manages the application window and system interactions
 
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, Notification } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { promises as fs } from 'fs';
@@ -20,6 +20,15 @@ import { MetadataStatus, createEmptyMetadata } from './metadata/schemas.js';
 import { generateFingerprint, hasUsefulFingerprint } from './metadata/fingerprint.js';
 import { getARMDatabase } from './metadata/arm-database.js';
 
+// Emby export system
+import { EmbyExporter } from './emby.js';
+
+// Transfer system
+import { getTransferManager } from './transfer.js';
+
+// Export watcher (auto-export on approval)
+import { getExportWatcher, resetExportWatcher } from './exportWatcher.js';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -33,6 +42,13 @@ let tmdbClient = null;
 let discIdentifier = null;
 let metadataWatcher = null;
 
+// Emby export globals
+let embyExporter = null;
+let currentEmbyExport = null; // Track current export for cancellation
+
+// Export watcher (auto-export on approval)
+let exportWatcher = null;
+
 // PARALLEL BACKUP SYSTEM
 // With --noscan flag, MakeMKV processes can run in parallel because:
 // 1. Each process targets a specific disc:N directly (no scanning)
@@ -45,6 +61,26 @@ const runningBackups = new Map(); // driveId -> { makemkv, discName }
 // Get or create shared MakeMKV instance (for settings/status checks)
 // Note: Uses a lock to prevent race conditions during initialization
 let sharedMakeMKVPromise = null;
+
+// Helper function to show desktop notifications
+function showNotification(title, body, type = 'info') {
+  if (!Notification.isSupported()) {
+    logger.warn('notification', 'Notifications not supported on this system');
+    return;
+  }
+
+  try {
+    const notification = new Notification({
+      title,
+      body,
+      silent: false,
+    });
+    notification.show();
+    logger.debug('notification', `Showed notification: ${title}`);
+  } catch (error) {
+    logger.warn('notification', `Failed to show notification: ${error.message}`);
+  }
+}
 
 async function getSharedMakeMKV() {
   if (sharedMakeMKV) {
@@ -168,7 +204,24 @@ async function initializeMetadataSystem() {
       const backupPath = path.join(makemkv.basePath, 'backup');
       metadataWatcher = getMetadataWatcher(backupPath, {
         intervalMs: metadataSettings.watcherIntervalMs || 30000,
-        onPending: (backup) => {
+        onPending: async (backup) => {
+          // Check if Live Dangerously mode is enabled - auto-approve everything
+          const settings = await makemkv.getSettings();
+          if (settings.automation?.liveDangerously) {
+            logger.info('metadata', `[YOLO] Auto-approving ${backup.name}`);
+            try {
+              const fullBackupPath = path.join(backupPath, backup.name);
+              const result = await discIdentifier.approve(fullBackupPath);
+              if (result.success && exportWatcher) {
+                const metadata = await discIdentifier.loadMetadata(fullBackupPath);
+                exportWatcher.queueExport(backup.name, fullBackupPath, metadata);
+                logger.info('export', `[YOLO] Auto-queued ${backup.name} for export`);
+              }
+            } catch (err) {
+              logger.error('metadata', `[YOLO] Auto-approve failed for ${backup.name}`, err);
+            }
+          }
+          // Always notify UI
           if (mainWindow) {
             mainWindow.webContents.send('metadata-pending', backup);
           }
@@ -184,6 +237,47 @@ async function initializeMetadataSystem() {
       });
       metadataWatcher.start();
       logger.info('metadata', 'Metadata watcher started');
+
+      // Initialize export watcher (auto-export on approval)
+      exportWatcher = getExportWatcher({
+        backupPath,
+        makemkvPath: makemkv.makemkvPath,
+        getSettings: async () => makemkv.getSettings(),
+        onProgress: (data) => {
+          if (mainWindow) {
+            mainWindow.webContents.send('export-progress', data);
+          }
+        },
+        onLog: (data) => {
+          if (mainWindow) {
+            mainWindow.webContents.send('export-log', data);
+          }
+        },
+        onComplete: (data) => {
+          if (mainWindow) {
+            mainWindow.webContents.send('export-complete', data);
+          }
+          // Show desktop notification for successful export
+          showNotification(
+            'Export Complete',
+            `${data.name} has been exported successfully.`,
+            'success'
+          );
+        },
+        onError: (data) => {
+          if (mainWindow) {
+            mainWindow.webContents.send('export-error', data);
+          }
+          // Show desktop notification for failed export
+          showNotification(
+            'Export Failed',
+            `${data.name}: ${data.error}`,
+            'error'
+          );
+        }
+      });
+      exportWatcher.start();
+      logger.info('export', 'Export watcher started');
     }
 
     logger.info('metadata', 'Metadata system initialized');
@@ -339,18 +433,18 @@ function setupIPC() {
     const makemkv = new MakeMKVAdapter();
     await makemkv.loadSettings();
 
-    // Track this backup (include fingerprint)
-    runningBackups.set(driveId, { makemkv, discName, fingerprint });
+    // Track this backup (include fingerprint and driveLetter for eject)
+    runningBackups.set(driveId, { makemkv, discName, fingerprint, driveLetter });
 
     // Run backup in background (don't await - let it run parallel)
-    runBackup(driveId, makemkv, makemkvIndex, discName, discSize, fingerprint);
+    runBackup(driveId, makemkv, makemkvIndex, discName, discSize, fingerprint, driveLetter);
 
     // Return immediately - progress comes via IPC events
     return { success: true, driveId, started: true, fingerprint };
   });
 
   // Run a single backup (called in parallel for each drive)
-  async function runBackup(driveId, makemkv, makemkvIndex, discName, discSize, fingerprint = null) {
+  async function runBackup(driveId, makemkv, makemkvIndex, discName, discSize, fingerprint = null, driveLetter = null) {
     try {
       const result = await makemkv.startBackup(makemkvIndex, discName, discSize,
         // Progress callback
@@ -442,6 +536,31 @@ function setupIPC() {
         ...result
       });
 
+      // Show desktop notification for successful backup
+      showNotification(
+        'Backup Complete',
+        `${discName} has been successfully backed up.`,
+        'success'
+      );
+
+      // Auto-eject disc if enabled
+      if (driveLetter) {
+        try {
+          const settings = await makemkv.getSettings();
+          if (settings.automation?.ejectAfterBackup) {
+            logger.info('start-backup', `Auto-ejecting disc from ${driveLetter}`);
+            const ejectResult = await driveDetector.ejectDrive(driveLetter);
+            if (ejectResult.success) {
+              showNotification('Disc Ejected', `${driveLetter} has been ejected.`);
+            } else {
+              logger.warn('start-backup', `Failed to eject ${driveLetter}: ${ejectResult.error}`);
+            }
+          }
+        } catch (ejectError) {
+          logger.warn('start-backup', `Eject error: ${ejectError.message}`);
+        }
+      }
+
     } catch (error) {
       logger.error('start-backup', `Backup failed for ${discName}`, error);
 
@@ -453,6 +572,13 @@ function setupIPC() {
         success: false,
         error: error.message
       });
+
+      // Show desktop notification for failed backup
+      showNotification(
+        'Backup Failed',
+        `${discName}: ${error.message}`,
+        'error'
+      );
 
     } finally {
       // Remove from running backups
@@ -617,6 +743,7 @@ function setupIPC() {
   });
 
   // Approve metadata (user confirms it's correct)
+  // This also triggers the automatic export workflow
   ipcMain.handle('approve-metadata', async (event, backupName) => {
     try {
       if (!discIdentifier) {
@@ -625,6 +752,14 @@ function setupIPC() {
       const makemkv = await getSharedMakeMKV();
       const backupPath = path.join(makemkv.basePath, 'backup', backupName);
       const result = await discIdentifier.approve(backupPath);
+
+      // If approval succeeded and export watcher is active, queue for export
+      if (result.success && exportWatcher) {
+        const metadata = await discIdentifier.loadMetadata(backupPath);
+        exportWatcher.queueExport(backupName, backupPath, metadata);
+        logger.info('export', `Queued ${backupName} for automatic export`);
+      }
+
       return result;
     } catch (error) {
       logger.error('metadata', `Failed to approve ${backupName}`, error);
@@ -694,6 +829,23 @@ function setupIPC() {
       return { success: true, details };
     } catch (error) {
       logger.error('metadata', `TMDB details failed for ${mediaType}/${tmdbId}`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Get TV season details (episodes list)
+  ipcMain.handle('get-tv-season-details', async (event, tvId, seasonNumber) => {
+    try {
+      if (!tmdbClient) {
+        return { success: false, error: 'TMDB client not initialized' };
+      }
+      if (!tmdbClient.hasApiKey()) {
+        return { success: false, error: 'TMDB API key not configured' };
+      }
+      const season = await tmdbClient.getTVSeasonDetails(tvId, seasonNumber);
+      return { success: true, season };
+    } catch (error) {
+      logger.error('metadata', `TMDB season details failed for tv/${tvId}/season/${seasonNumber}`, error);
       return { success: false, error: error.message };
     }
   });
@@ -799,6 +951,394 @@ function setupIPC() {
       return { success: true, valid };
     } catch (error) {
       logger.error('metadata', 'TMDB key validation failed', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // ============================================
+  // EMBY EXPORT SYSTEM IPC HANDLERS
+  // ============================================
+
+  // Get or create EmbyExporter instance
+  async function getEmbyExporter() {
+    if (!embyExporter) {
+      const makemkv = await getSharedMakeMKV();
+      embyExporter = new EmbyExporter(makemkv.makemkvPath);
+    }
+    return embyExporter;
+  }
+
+  // Scan backup for available titles
+  ipcMain.handle('emby-scan-titles', async (event, backupName) => {
+    try {
+      const makemkv = await getSharedMakeMKV();
+      const backupPath = path.join(makemkv.basePath, 'backup', backupName);
+      const exporter = await getEmbyExporter();
+
+      logger.info('emby', `Scanning titles for: ${backupName}`);
+      const result = await exporter.scanTitles(backupPath);
+      return { success: true, ...result };
+    } catch (error) {
+      logger.error('emby', `Failed to scan titles for ${backupName}`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Export backup to Emby library
+  ipcMain.handle('emby-export', async (event, options) => {
+    try {
+      const { backupName, titleIndex, mediaType, tvInfo } = options;
+      const makemkv = await getSharedMakeMKV();
+      const settings = await makemkv.getSettings();
+
+      // Validate Emby settings
+      const embySettings = settings.emby || {};
+      const libraryPath = mediaType === 'tv'
+        ? embySettings.tvPath
+        : embySettings.moviePath;
+
+      if (!libraryPath) {
+        return {
+          success: false,
+          error: `Emby ${mediaType} library path not configured. Please set it in Settings.`
+        };
+      }
+
+      const backupPath = path.join(makemkv.basePath, 'backup', backupName);
+
+      // Load metadata for proper naming
+      let metadata = null;
+      if (discIdentifier) {
+        metadata = await discIdentifier.loadMetadata(backupPath);
+      }
+      if (!metadata) {
+        metadata = { final: { title: backupName }, disc: { volumeLabel: backupName } };
+      }
+
+      const exporter = await getEmbyExporter();
+      currentEmbyExport = exporter;
+
+      logger.info('emby', `Starting export: ${backupName} -> ${libraryPath}`);
+
+      const result = await exporter.exportToEmby(
+        {
+          backupPath,
+          titleIndex,
+          metadata,
+          embyLibraryPath: libraryPath,
+          mediaType,
+          tvInfo
+        },
+        (progress) => {
+          if (mainWindow) {
+            mainWindow.webContents.send('emby-progress', {
+              backupName,
+              ...progress
+            });
+          }
+        },
+        (message) => {
+          if (mainWindow) {
+            mainWindow.webContents.send('emby-log', {
+              backupName,
+              message
+            });
+          }
+          logger.debug('emby-export', message);
+        }
+      );
+
+      currentEmbyExport = null;
+      logger.info('emby', `Export complete: ${result.embyPath}`);
+
+      return { success: true, ...result };
+    } catch (error) {
+      currentEmbyExport = null;
+      logger.error('emby', 'Export failed', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Cancel current Emby export
+  ipcMain.handle('emby-cancel', async () => {
+    try {
+      if (currentEmbyExport) {
+        currentEmbyExport.cancel();
+        currentEmbyExport = null;
+        logger.info('emby', 'Export cancelled');
+        return { success: true };
+      }
+      return { success: true, wasNotRunning: true };
+    } catch (error) {
+      logger.error('emby', 'Failed to cancel export', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Get Emby export preview (what path/name will be used)
+  ipcMain.handle('emby-preview', async (event, options) => {
+    try {
+      const { backupName, mediaType, tvInfo } = options;
+      const makemkv = await getSharedMakeMKV();
+      const settings = await makemkv.getSettings();
+      const embySettings = settings.emby || {};
+
+      const libraryPath = mediaType === 'tv'
+        ? embySettings.tvPath
+        : embySettings.moviePath;
+
+      if (!libraryPath) {
+        return {
+          success: false,
+          error: `Emby ${mediaType} library path not configured`
+        };
+      }
+
+      const backupPath = path.join(makemkv.basePath, 'backup', backupName);
+
+      // Load metadata
+      let metadata = null;
+      if (discIdentifier) {
+        metadata = await discIdentifier.loadMetadata(backupPath);
+      }
+      if (!metadata) {
+        metadata = { final: { title: backupName }, disc: { volumeLabel: backupName } };
+      }
+
+      const exporter = await getEmbyExporter();
+      const preview = exporter.generateEmbyPath({
+        title: metadata.final?.title || metadata.disc?.volumeLabel || backupName,
+        year: metadata.final?.year || null,
+        tmdbId: metadata.tmdb?.id || null,
+        mediaType,
+        tvInfo,
+        embyLibraryPath: libraryPath
+      });
+
+      return {
+        success: true,
+        ...preview,
+        fullPath: path.join(preview.folderPath, preview.fileName)
+      };
+    } catch (error) {
+      logger.error('emby', 'Preview failed', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // ============================================
+  // TRANSFER SYSTEM IPC HANDLERS
+  // ============================================
+
+  // Test transfer connection
+  ipcMain.handle('test-transfer-connection', async (event, config) => {
+    try {
+      const transferManager = getTransferManager();
+      const result = await transferManager.testConnection(config);
+      logger.info('transfer', `Connection test: ${result.success ? 'success' : 'failed'} - ${result.message}`);
+      return result;
+    } catch (error) {
+      logger.error('transfer', 'Connection test error', error);
+      return { success: false, message: error.message };
+    }
+  });
+
+  // Get export queue status
+  ipcMain.handle('get-export-queue-status', async () => {
+    if (!exportWatcher) {
+      return { success: true, status: { queueLength: 0, processing: null, queue: [] } };
+    }
+    return { success: true, status: exportWatcher.getQueueStatus() };
+  });
+
+  // Manual export - queue a specific backup for export
+  ipcMain.handle('queue-export', async (event, backupName) => {
+    try {
+      if (!exportWatcher) {
+        return { success: false, error: 'Export watcher not initialized' };
+      }
+
+      // Get the backup path and metadata
+      const settings = await makemkv.getSettings();
+      const backupPath = path.join(settings.basePath, 'backup', backupName);
+      const metadata = await discIdentifier.loadMetadata(backupPath);
+
+      if (!metadata) {
+        return { success: false, error: 'No metadata found for this backup' };
+      }
+
+      // Update status to approved if not already (for re-export)
+      if (metadata.status === 'exported') {
+        await discIdentifier.update(backupPath, {
+          status: MetadataStatus.APPROVED
+        });
+        // Reload metadata
+        const updatedMetadata = await discIdentifier.loadMetadata(backupPath);
+        exportWatcher.queueExport(backupName, backupPath, updatedMetadata);
+      } else if (metadata.status === 'approved' || metadata.status === 'manual') {
+        exportWatcher.queueExport(backupName, backupPath, metadata);
+      } else {
+        return { success: false, error: `Cannot export backup with status: ${metadata.status}. Approve the metadata first.` };
+      }
+
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Cancel current export
+  ipcMain.handle('cancel-export', async () => {
+    if (!exportWatcher) {
+      return { success: false, error: 'Export watcher not initialized' };
+    }
+    exportWatcher.cancel();
+    return { success: true };
+  });
+
+  // ============================================
+  // DELETE AND RESTART BACKUP IPC HANDLER
+  // ============================================
+
+  // Delete existing backup and restart fresh (Re-Do functionality)
+  ipcMain.handle('delete-and-restart-backup', async (event, driveId, makemkvIndex, discName, discSize, driveLetter) => {
+    try {
+      logger.info('delete-restart', `Deleting existing backup for ${discName} to restart fresh`);
+
+      const makemkv = await getSharedMakeMKV();
+      const backupPath = path.join(makemkv.basePath, 'backup', discName);
+      const tempPath = path.join(makemkv.basePath, 'temp', discName);
+
+      // Delete existing backup folder if exists
+      const backupExists = await fs.access(backupPath).then(() => true).catch(() => false);
+      if (backupExists) {
+        logger.info('delete-restart', `Deleting backup: ${backupPath}`);
+        await fs.rm(backupPath, { recursive: true, force: true });
+      }
+
+      // Delete temp folder if exists
+      const tempExists = await fs.access(tempPath).then(() => true).catch(() => false);
+      if (tempExists) {
+        logger.info('delete-restart', `Deleting temp: ${tempPath}`);
+        await fs.rm(tempPath, { recursive: true, force: true });
+      }
+
+      logger.info('delete-restart', `Existing backup deleted, starting fresh backup for ${discName}`);
+
+      // Now start the backup normally (same logic as start-backup handler)
+      if (runningBackups.has(driveId)) {
+        return { success: false, error: 'Backup already running for this drive' };
+      }
+
+      // Fingerprinting before backup
+      let fingerprint = null;
+      if (driveLetter) {
+        try {
+          fingerprint = await generateFingerprint(driveLetter, discName);
+          if (fingerprint.crc64) {
+            const armDb = getARMDatabase();
+            const armMatch = await armDb.lookup(fingerprint.crc64);
+            if (armMatch) {
+              fingerprint.armMatch = armMatch;
+            }
+          }
+        } catch (error) {
+          fingerprint = { type: 'unknown', error: error.message, capturedAt: new Date().toISOString() };
+        }
+      }
+
+      // Notify UI
+      mainWindow.webContents.send('backup-started', { driveId, fingerprint });
+
+      // Create new adapter and start backup
+      const backupMakemkv = new MakeMKVAdapter();
+      await backupMakemkv.loadSettings();
+      runningBackups.set(driveId, { makemkv: backupMakemkv, discName, fingerprint });
+
+      // Run backup in background
+      runBackup(driveId, backupMakemkv, makemkvIndex, discName, discSize, fingerprint);
+
+      return { success: true, driveId, started: true, deleted: true };
+    } catch (error) {
+      logger.error('delete-restart', `Failed to delete and restart backup for ${discName}`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Delete a backup (for manual cleanup from UI)
+  ipcMain.handle('delete-backup', async (event, backupName) => {
+    try {
+      logger.info('delete-backup', `Deleting backup: ${backupName}`);
+
+      const makemkv = await getSharedMakeMKV();
+      const backupPath = path.join(makemkv.basePath, 'backup', backupName);
+
+      const exists = await fs.access(backupPath).then(() => true).catch(() => false);
+      if (!exists) {
+        return { success: false, error: 'Backup not found' };
+      }
+
+      await fs.rm(backupPath, { recursive: true, force: true });
+      logger.info('delete-backup', `Deleted backup: ${backupPath}`);
+
+      return { success: true };
+    } catch (error) {
+      logger.error('delete-backup', `Failed to delete backup ${backupName}`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // ============================================
+  // AUTOMATION TOGGLE IPC HANDLERS
+  // ============================================
+
+  // Get automation settings
+  ipcMain.handle('get-automation', async () => {
+    try {
+      const makemkv = await getSharedMakeMKV();
+      const settings = await makemkv.getSettings();
+      return {
+        success: true,
+        automation: settings.automation || { autoBackup: false, autoMeta: true, autoExport: false, liveDangerously: false, ejectAfterBackup: false }
+      };
+    } catch (error) {
+      logger.error('automation', 'Failed to get automation settings', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Toggle a specific automation setting
+  ipcMain.handle('toggle-automation', async (event, key) => {
+    try {
+      const makemkv = await getSharedMakeMKV();
+      const settings = await makemkv.getSettings();
+      const automation = settings.automation || { autoBackup: false, autoMeta: true, autoExport: false, liveDangerously: false, ejectAfterBackup: false };
+
+      // Toggle the specified key
+      if (key in automation) {
+        automation[key] = !automation[key];
+        await makemkv.saveSettings({ ...settings, automation });
+        logger.info('automation', `Toggled ${key} to ${automation[key]}`);
+        return { success: true, automation };
+      } else {
+        return { success: false, error: `Unknown automation key: ${key}` };
+      }
+    } catch (error) {
+      logger.error('automation', `Failed to toggle ${key}`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Set all automation settings at once
+  ipcMain.handle('set-automation', async (event, automation) => {
+    try {
+      const makemkv = await getSharedMakeMKV();
+      const settings = await makemkv.getSettings();
+      await makemkv.saveSettings({ ...settings, automation });
+      logger.info('automation', 'Updated automation settings', automation);
+      return { success: true, automation };
+    } catch (error) {
+      logger.error('automation', 'Failed to set automation settings', error);
       return { success: false, error: error.message };
     }
   });

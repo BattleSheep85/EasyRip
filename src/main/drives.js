@@ -270,4 +270,28 @@ export class DriveDetector {
   async getDiscSize(driveLetter) {
     return this.getDiscSizeSync(driveLetter);
   }
+
+  // Eject a disc from the specified drive
+  async ejectDrive(driveLetter) {
+    const drive = driveLetter.replace(/[:\\\/]+$/, '');
+
+    try {
+      logger.info('drives', `Ejecting drive ${drive}:`);
+
+      // Use PowerShell to eject the drive via Shell.Application COM object
+      const psCommand = `(New-Object -comObject Shell.Application).NameSpace(17).ParseName("${drive}:").InvokeVerb("Eject")`;
+      execSync(`powershell -Command "${psCommand}"`, {
+        encoding: 'utf8',
+        timeout: 10000,
+        windowsHide: true,
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+
+      logger.info('drives', `Successfully ejected ${drive}:`);
+      return { success: true, driveLetter: `${drive}:` };
+    } catch (error) {
+      logger.error('drives', `Failed to eject ${drive}:`, error);
+      return { success: false, error: error.message, driveLetter: `${drive}:` };
+    }
+  }
 }

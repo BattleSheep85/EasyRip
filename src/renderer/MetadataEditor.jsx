@@ -14,6 +14,13 @@ function MetadataEditor({ backupName, onClose, onSave, onSearchTMDB }) {
     year: '',
   });
 
+  // TV Episode selection state
+  const [tvDetails, setTvDetails] = useState(null); // { numberOfSeasons }
+  const [selectedSeason, setSelectedSeason] = useState(1);
+  const [seasonData, setSeasonData] = useState(null); // { episodes: [...] }
+  const [selectedEpisode, setSelectedEpisode] = useState(1);
+  const [loadingEpisodes, setLoadingEpisodes] = useState(false);
+
   // Load metadata on mount
   useEffect(() => {
     loadMetadata();
@@ -43,14 +50,100 @@ function MetadataEditor({ backupName, onClose, onSave, onSearchTMDB }) {
     }
   }
 
+  // Load TV show details when metadata indicates it's a TV show
+  useEffect(() => {
+    if (metadata?.tmdb?.mediaType === 'tv' && metadata?.tmdb?.id) {
+      loadTVDetails(metadata.tmdb.id);
+      // Load existing tvInfo if available
+      if (metadata.tvInfo?.season) {
+        setSelectedSeason(metadata.tvInfo.season);
+        setSelectedEpisode(metadata.tvInfo.episode || 1);
+      }
+    } else {
+      setTvDetails(null);
+      setSeasonData(null);
+    }
+  }, [metadata?.tmdb?.id, metadata?.tmdb?.mediaType]);
+
+  // Load season details when season changes
+  useEffect(() => {
+    if (tvDetails && metadata?.tmdb?.id && selectedSeason > 0) {
+      loadSeasonDetails(metadata.tmdb.id, selectedSeason);
+    }
+  }, [tvDetails, selectedSeason, metadata?.tmdb?.id]);
+
+  async function loadTVDetails(tvId) {
+    if (!window.electronAPI) return;
+    try {
+      const result = await window.electronAPI.getTMDBDetails(tvId, 'tv');
+      if (result.success && result.details?.tvInfo) {
+        setTvDetails(result.details.tvInfo);
+      }
+    } catch (err) {
+      console.error('Failed to load TV details:', err);
+    }
+  }
+
+  async function loadSeasonDetails(tvId, seasonNumber) {
+    if (!window.electronAPI) return;
+    setLoadingEpisodes(true);
+    try {
+      const result = await window.electronAPI.getTVSeasonDetails(tvId, seasonNumber);
+      if (result.success) {
+        setSeasonData(result.season);
+        // Auto-select first episode if no episode selected
+        if (result.season?.episodes?.length > 0 && !metadata?.tvInfo?.episode) {
+          setSelectedEpisode(result.season.episodes[0].episodeNumber);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load season details:', err);
+    } finally {
+      setLoadingEpisodes(false);
+    }
+  }
+
   async function handleApprove() {
     if (!window.electronAPI) return;
     setSaving(true);
     try {
+      // If it's a TV show, save the episode info first
+      if (metadata?.tmdb?.mediaType === 'tv' && selectedSeason && selectedEpisode) {
+        await window.electronAPI.updateMetadata(backupName, {
+          tvInfo: {
+            season: selectedSeason,
+            episode: selectedEpisode
+          }
+        });
+      }
       const result = await window.electronAPI.approveMetadata(backupName);
       if (result.success) {
         onSave?.();
         onClose();
+      } else {
+        setError(result.error);
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleSaveEpisode() {
+    if (!window.electronAPI) return;
+    setSaving(true);
+    try {
+      const result = await window.electronAPI.updateMetadata(backupName, {
+        tvInfo: {
+          season: selectedSeason,
+          episode: selectedEpisode
+        }
+      });
+      if (result.success) {
+        // Reload to show updated info
+        loadMetadata();
+        onSave?.();
       } else {
         setError(result.error);
       }
@@ -98,6 +191,8 @@ function MetadataEditor({ backupName, onClose, onSave, onSearchTMDB }) {
       if (result.success) {
         // Reload metadata to show updated info
         loadMetadata();
+        // Notify parent to refresh (for poster display in MetadataManager)
+        onSave?.();
       } else {
         setError(result.error);
       }
@@ -205,6 +300,48 @@ function MetadataEditor({ backupName, onClose, onSave, onSearchTMDB }) {
                   <span className="value">{metadata?.disc?.titleCount || 0}</span>
                 </div>
               </div>
+
+              {/* Track Info Section */}
+              {(() => {
+                // Find main feature from extracted titles
+                const mainFeature = metadata?.extracted?.titles?.find(t => t.isMainFeature) ||
+                                   metadata?.extracted?.titles?.[0];
+                if (!mainFeature) return null;
+
+                const audioTracks = mainFeature.audioTracks || [];
+                const subtitles = mainFeature.subtitles || [];
+
+                if (audioTracks.length === 0 && subtitles.length === 0) return null;
+
+                return (
+                  <div className="track-info-section">
+                    <h5>Track Information</h5>
+                    {audioTracks.length > 0 && (
+                      <div className="track-row">
+                        <span className="track-label">Audio:</span>
+                        <div className="track-badges">
+                          {audioTracks.map((track, i) => (
+                            <span key={i} className="track-badge audio-badge">{track}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {subtitles.length > 0 && (
+                      <div className="track-row">
+                        <span className="track-label">Subtitles:</span>
+                        <div className="track-badges">
+                          {subtitles.map((sub, i) => (
+                            <span key={i} className="track-badge subtitle-badge">{sub}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <div className="track-note">
+                      All tracks will be included in export.
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Right: Edit form and candidates */}
@@ -275,6 +412,71 @@ function MetadataEditor({ backupName, onClose, onSave, onSearchTMDB }) {
                     </div>
                     {metadata.tmdb.overview && (
                       <div className="match-overview">{metadata.tmdb.overview}</div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* TV Episode Selection - shown only for TV shows */}
+              {metadata?.tmdb?.mediaType === 'tv' && tvDetails && (
+                <div className="episode-selection-section">
+                  <h4>Episode Selection</h4>
+                  <div className="episode-selection">
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>Season:</label>
+                        <select
+                          value={selectedSeason}
+                          onChange={e => setSelectedSeason(parseInt(e.target.value, 10))}
+                          disabled={loadingEpisodes}
+                        >
+                          {Array.from({ length: tvDetails.numberOfSeasons || 1 }, (_, i) => i + 1).map(num => (
+                            <option key={num} value={num}>Season {num}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="form-group flex-grow">
+                        <label>Episode:</label>
+                        <select
+                          value={selectedEpisode}
+                          onChange={e => setSelectedEpisode(parseInt(e.target.value, 10))}
+                          disabled={loadingEpisodes || !seasonData?.episodes?.length}
+                        >
+                          {seasonData?.episodes?.map(ep => (
+                            <option key={ep.episodeNumber} value={ep.episodeNumber}>
+                              E{String(ep.episodeNumber).padStart(2, '0')} - {ep.name || 'Episode ' + ep.episodeNumber}
+                            </option>
+                          ))}
+                          {(!seasonData?.episodes?.length && !loadingEpisodes) && (
+                            <option value={1}>Episode 1</option>
+                          )}
+                        </select>
+                      </div>
+                    </div>
+                    {loadingEpisodes && (
+                      <div className="loading-indicator small">Loading episodes...</div>
+                    )}
+                    {seasonData?.episodes?.find(ep => ep.episodeNumber === selectedEpisode)?.overview && (
+                      <div className="episode-overview">
+                        {seasonData.episodes.find(ep => ep.episodeNumber === selectedEpisode)?.overview}
+                      </div>
+                    )}
+                    <div className="episode-preview">
+                      <span className="preview-label">Export as:</span>
+                      <span className="preview-filename">
+                        {metadata.tmdb.title} S{String(selectedSeason).padStart(2, '0')}E{String(selectedEpisode).padStart(2, '0')}.mkv
+                      </span>
+                    </div>
+                    {metadata.tvInfo?.season !== selectedSeason || metadata.tvInfo?.episode !== selectedEpisode ? (
+                      <button
+                        className="btn btn-sm btn-primary"
+                        onClick={handleSaveEpisode}
+                        disabled={saving}
+                      >
+                        Save Episode Selection
+                      </button>
+                    ) : (
+                      <span className="saved-indicator">Episode selection saved</span>
                     )}
                   </div>
                 </div>

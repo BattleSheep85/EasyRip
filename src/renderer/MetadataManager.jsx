@@ -4,20 +4,23 @@ import React, { useState, useEffect, useCallback } from 'react';
 // TMDB Image base URL
 const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p';
 
-function MetadataManager({ onClose, onEdit }) {
+function MetadataManager({ onClose, onEdit, refreshKey = 0 }) {
   const [backups, setBackups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [ollamaStatus, setOllamaStatus] = useState(null);
   const [queueStatus, setQueueStatus] = useState(null);
+  const [exportQueueStatus, setExportQueueStatus] = useState(null);
   const [progressInfo, setProgressInfo] = useState(null);
-  const [filter, setFilter] = useState('all'); // all, pending, approved, error
+  const [filter, setFilter] = useState('all'); // all, pending, approved, exported, error
+  const [confirmDelete, setConfirmDelete] = useState(null); // backup name to confirm deletion
 
-  // Load backups on mount
+  // Load backups on mount and when refreshKey changes
   useEffect(() => {
     loadBackups();
     loadOllamaStatus();
     loadQueueStatus();
+    loadExportQueueStatus();
 
     // Listen for metadata updates
     if (window.electronAPI) {
@@ -29,19 +32,27 @@ function MetadataManager({ onClose, onEdit }) {
       window.electronAPI.onOllamaProgress((data) => {
         setProgressInfo(data);
       });
+
+      // Listen for export completion to refresh
+      window.electronAPI.onExportComplete((data) => {
+        loadBackups();
+        loadExportQueueStatus();
+      });
     }
 
     return () => {
       if (window.electronAPI) {
         window.electronAPI.removeMetadataListeners();
+        window.electronAPI.removeExportListeners();
       }
     };
-  }, []);
+  }, [refreshKey]);
 
   // Periodic queue status refresh
   useEffect(() => {
     const interval = setInterval(() => {
       loadQueueStatus();
+      loadExportQueueStatus();
     }, 5000);
     return () => clearInterval(interval);
   }, []);
@@ -87,6 +98,18 @@ function MetadataManager({ onClose, onEdit }) {
     }
   }
 
+  async function loadExportQueueStatus() {
+    if (!window.electronAPI) return;
+    try {
+      const result = await window.electronAPI.getExportQueueStatus();
+      if (result.success) {
+        setExportQueueStatus(result.status);
+      }
+    } catch (err) {
+      console.error('Failed to get export queue status:', err);
+    }
+  }
+
   async function handleScanBackups() {
     if (!window.electronAPI) return;
     try {
@@ -119,6 +142,35 @@ function MetadataManager({ onClose, onEdit }) {
     try {
       const result = await window.electronAPI.approveMetadata(backupName);
       if (result.success) {
+        loadBackups();
+      } else {
+        setError(result.error);
+      }
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function handleExport(backupName) {
+    if (!window.electronAPI) return;
+    try {
+      const result = await window.electronAPI.queueExport(backupName);
+      if (result.success) {
+        loadExportQueueStatus();
+      } else {
+        setError(result.error);
+      }
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function handleDelete(backupName) {
+    if (!window.electronAPI) return;
+    try {
+      const result = await window.electronAPI.deleteBackup(backupName);
+      if (result.success) {
+        setConfirmDelete(null);
         loadBackups();
       } else {
         setError(result.error);
@@ -171,6 +223,7 @@ function MetadataManager({ onClose, onEdit }) {
       case 'approved': return 'metadata-status approved';
       case 'pending': return 'metadata-status pending';
       case 'manual': return 'metadata-status manual';
+      case 'exported': return 'metadata-status exported';
       case 'error': return 'metadata-status error';
       default: return 'metadata-status unknown';
     }
@@ -182,15 +235,24 @@ function MetadataManager({ onClose, onEdit }) {
       case 'approved': return 'Approved';
       case 'pending': return 'Pending';
       case 'manual': return 'Manual';
+      case 'exported': return 'Exported';
       case 'error': return 'Error';
       default: return 'No Metadata';
     }
+  }
+
+  // Check if backup is in export queue
+  function isInExportQueue(backupName) {
+    if (!exportQueueStatus) return false;
+    return exportQueueStatus.processing === backupName ||
+           exportQueueStatus.queue?.includes(backupName);
   }
 
   // Filter backups
   const filteredBackups = backups.filter(backup => {
     if (filter === 'all') return true;
     if (filter === 'none') return !backup.hasMetadata;
+    if (filter === 'approved') return backup.status === 'approved' || backup.status === 'manual';
     return backup.status === filter;
   });
 
@@ -198,7 +260,8 @@ function MetadataManager({ onClose, onEdit }) {
   const counts = {
     all: backups.length,
     pending: backups.filter(b => b.status === 'pending').length,
-    approved: backups.filter(b => b.status === 'approved').length,
+    approved: backups.filter(b => b.status === 'approved' || b.status === 'manual').length,
+    exported: backups.filter(b => b.status === 'exported').length,
     error: backups.filter(b => b.status === 'error' || !b.hasMetadata).length,
   };
 
@@ -244,9 +307,19 @@ function MetadataManager({ onClose, onEdit }) {
               </span>
               {queueStatus && queueStatus.queueLength > 0 && (
                 <span className="status-item">
-                  <strong>Queue:</strong> {queueStatus.queueLength} pending
+                  <strong>ID Queue:</strong> {queueStatus.queueLength} pending
                   {queueStatus.processing && (
                     <span className="processing-name"> (processing: {queueStatus.processing})</span>
+                  )}
+                </span>
+              )}
+              {exportQueueStatus && (exportQueueStatus.queueLength > 0 || exportQueueStatus.processing) && (
+                <span className="status-item export-queue">
+                  <strong>Export:</strong>{' '}
+                  {exportQueueStatus.processing ? (
+                    <span className="status-exporting">Exporting: {exportQueueStatus.processing}</span>
+                  ) : (
+                    <span>{exportQueueStatus.queueLength} queued</span>
                   )}
                 </span>
               )}
@@ -293,7 +366,13 @@ function MetadataManager({ onClose, onEdit }) {
               className={`filter-btn ${filter === 'approved' ? 'active' : ''}`}
               onClick={() => setFilter('approved')}
             >
-              Approved ({counts.approved})
+              Ready ({counts.approved})
+            </button>
+            <button
+              className={`filter-btn ${filter === 'exported' ? 'active' : ''}`}
+              onClick={() => setFilter('exported')}
+            >
+              Exported ({counts.exported})
             </button>
             <button
               className={`filter-btn ${filter === 'error' ? 'active' : ''}`}
@@ -363,6 +442,26 @@ function MetadataManager({ onClose, onEdit }) {
                         Approve
                       </button>
                     )}
+                    {(backup.status === 'approved' || backup.status === 'manual') && (
+                      <button
+                        className="btn btn-xs btn-primary"
+                        onClick={() => handleExport(backup.name)}
+                        disabled={isInExportQueue(backup.name)}
+                        title={isInExportQueue(backup.name) ? 'Already in export queue' : 'Export to library'}
+                      >
+                        {isInExportQueue(backup.name) ? 'Queued' : 'Export'}
+                      </button>
+                    )}
+                    {backup.status === 'exported' && (
+                      <button
+                        className="btn btn-xs btn-warning"
+                        onClick={() => handleExport(backup.name)}
+                        disabled={isInExportQueue(backup.name)}
+                        title={isInExportQueue(backup.name) ? 'Already in export queue' : 'Re-export to library'}
+                      >
+                        {isInExportQueue(backup.name) ? 'Queued' : 'Re-Export'}
+                      </button>
+                    )}
                     <button
                       className="btn btn-xs"
                       onClick={() => onEdit(backup.name)}
@@ -376,6 +475,13 @@ function MetadataManager({ onClose, onEdit }) {
                       title="Re-run identification"
                     >
                       Re-ID
+                    </button>
+                    <button
+                      className="btn btn-xs btn-danger"
+                      onClick={() => setConfirmDelete(backup.name)}
+                      title="Delete backup"
+                    >
+                      Delete
                     </button>
                   </div>
                 </div>
@@ -393,6 +499,27 @@ function MetadataManager({ onClose, onEdit }) {
           <button className="btn" onClick={onClose}>Close</button>
         </div>
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      {confirmDelete && (
+        <div className="modal-overlay confirm-overlay" onClick={() => setConfirmDelete(null)}>
+          <div className="modal modal-sm confirm-dialog" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Confirm Delete</h3>
+              <button className="modal-close" onClick={() => setConfirmDelete(null)}>X</button>
+            </div>
+            <div className="modal-body">
+              <p>Are you sure you want to delete this backup?</p>
+              <p className="confirm-name">{confirmDelete}</p>
+              <p className="confirm-warning">This will permanently delete all backup files and cannot be undone.</p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn" onClick={() => setConfirmDelete(null)}>Cancel</button>
+              <button className="btn btn-danger" onClick={() => handleDelete(confirmDelete)}>Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
