@@ -1,12 +1,13 @@
 // MakeMKV Adapter - Wrapper for MakeMKVcon command-line tool
 // This module handles all interaction with MakeMKV
 
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import { promises as fs, existsSync } from 'fs';
 import path from 'path';
 import os from 'os';
 import { formatSize, isBackupComplete } from '../shared/utils.js';
 import logger from './logger.js';
+import https from 'https';
 
 export class MakeMKVAdapter {
   constructor() {
@@ -19,6 +20,7 @@ export class MakeMKVAdapter {
     this._settingsLoaded = false;
     this.lastError = null;
     this.tmdbApiKey = '';
+    this.makemkvKey = ''; // MakeMKV beta registration key
     this.transfer = null; // Transfer settings (protocol, host, paths)
     this.automation = { autoBackup: false, autoMeta: true, autoExport: false, liveDangerously: false, ejectAfterBackup: false }; // Automation toggles
   }
@@ -32,12 +34,14 @@ export class MakeMKVAdapter {
       this.makemkvPath = settings.makemkvPath || this.makemkvPath;
       this.basePath = settings.basePath || 'D:\\EasyRip';
       this.tmdbApiKey = settings.tmdbApiKey || '';
+      this.makemkvKey = settings.makemkvKey || '';
       this.transfer = settings.transfer || null;
       this.automation = settings.automation || { autoBackup: false, autoMeta: true, autoExport: false, liveDangerously: false, ejectAfterBackup: false };
     } catch {
       // Settings file doesn't exist yet, use defaults
       this.basePath = 'D:\\EasyRip';
       this.tmdbApiKey = '';
+      this.makemkvKey = '';
       this.transfer = null;
       this.automation = { autoBackup: false, autoMeta: true, autoExport: false, liveDangerously: false, ejectAfterBackup: false };
     }
@@ -60,6 +64,7 @@ export class MakeMKVAdapter {
       makemkvPath: this.makemkvPath,
       basePath: this.basePath,
       tmdbApiKey: this.tmdbApiKey,
+      makemkvKey: this.makemkvKey,
       transfer: this.transfer,
       automation: this.automation,
     };
@@ -70,6 +75,7 @@ export class MakeMKVAdapter {
     this.makemkvPath = settings.makemkvPath || this.makemkvPath;
     this.basePath = settings.basePath || this.basePath;
     this.tmdbApiKey = settings.tmdbApiKey || '';
+    this.makemkvKey = settings.makemkvKey || '';
     this.transfer = settings.transfer || null;
     this.automation = settings.automation || { autoBackup: false, autoMeta: true, autoExport: false, liveDangerously: false, ejectAfterBackup: false };
 
@@ -78,6 +84,11 @@ export class MakeMKVAdapter {
       JSON.stringify(settings, null, 2),
       'utf8'
     );
+
+    // If MakeMKV key is provided, apply it to Windows registry
+    if (this.makemkvKey) {
+      await this.applyMakeMKVKey(this.makemkvKey);
+    }
   }
 
   // Count files recursively in a folder
@@ -787,5 +798,100 @@ export class MakeMKVAdapter {
     } catch {
       return false;
     }
+  }
+
+  // Apply MakeMKV registration key to Windows registry
+  // Registry path: HKEY_CURRENT_USER\Software\MakeMKV\app_Key
+  async applyMakeMKVKey(key) {
+    if (!key || process.platform !== 'win32') {
+      return { success: false, error: 'Invalid key or not on Windows' };
+    }
+
+    try {
+      // Use reg.exe to add the key to the registry
+      // REG ADD "HKCU\Software\MakeMKV" /v app_Key /t REG_SZ /d "key" /f
+      const regPath = 'HKCU\\Software\\MakeMKV';
+      const cmd = `reg add "${regPath}" /v app_Key /t REG_SZ /d "${key}" /f`;
+
+      execSync(cmd, { windowsHide: true });
+      logger.info('makemkv', `Applied MakeMKV registration key to registry`);
+      return { success: true };
+    } catch (err) {
+      logger.error('makemkv', `Failed to apply MakeMKV key to registry: ${err.message}`);
+      return { success: false, error: err.message };
+    }
+  }
+
+  // Get current MakeMKV key from Windows registry
+  async getMakeMKVKeyFromRegistry() {
+    if (process.platform !== 'win32') {
+      return { success: false, error: 'Not on Windows' };
+    }
+
+    try {
+      const regPath = 'HKCU\\Software\\MakeMKV';
+      const output = execSync(`reg query "${regPath}" /v app_Key`, {
+        windowsHide: true,
+        encoding: 'utf8'
+      });
+
+      // Parse the output to extract the key value
+      // Format: "    app_Key    REG_SZ    T-xxxxx..."
+      const match = output.match(/app_Key\s+REG_SZ\s+(.+)/);
+      if (match && match[1]) {
+        return { success: true, key: match[1].trim() };
+      }
+      return { success: false, error: 'Key not found in registry' };
+    } catch (err) {
+      return { success: false, error: 'Key not found in registry' };
+    }
+  }
+
+  // Fetch the latest MakeMKV beta key from the forum
+  // Forum page: https://forum.makemkv.com/forum/viewtopic.php?t=1053
+  async fetchLatestKey() {
+    return new Promise((resolve, reject) => {
+      const url = 'https://forum.makemkv.com/forum/viewtopic.php?t=1053';
+
+      https.get(url, (res) => {
+        let data = '';
+
+        res.on('data', (chunk) => {
+          data += chunk;
+        });
+
+        res.on('end', () => {
+          try {
+            // The key is in a format like: T-xxxxxxxxxx...
+            // It's typically posted in a code block in the first post
+            // Look for the key pattern
+            const keyPattern = /T-[A-Za-z0-9@_]+/g;
+            const matches = data.match(keyPattern);
+
+            if (matches && matches.length > 0) {
+              // The key is usually the longest match that looks valid
+              // MakeMKV keys are typically 50-70 characters
+              const validKeys = matches.filter(k => k.length >= 40 && k.length <= 100);
+
+              if (validKeys.length > 0) {
+                // Take the first valid-looking key
+                const key = validKeys[0];
+                logger.info('makemkv', `Fetched MakeMKV key from forum: ${key.substring(0, 20)}...`);
+                resolve({ success: true, key });
+              } else {
+                resolve({ success: false, error: 'No valid key found on forum page' });
+              }
+            } else {
+              resolve({ success: false, error: 'No key pattern found on forum page' });
+            }
+          } catch (err) {
+            resolve({ success: false, error: `Failed to parse forum page: ${err.message}` });
+          }
+        });
+      }).on('error', (err) => {
+        logger.error('makemkv', `Failed to fetch key from forum: ${err.message}`);
+        resolve({ success: false, error: `Network error: ${err.message}` });
+      });
+    });
   }
 }

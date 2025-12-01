@@ -643,6 +643,42 @@ function setupIPC() {
     }
   });
 
+  // Fetch latest MakeMKV beta key from forum
+  ipcMain.handle('fetch-makemkv-key', async () => {
+    try {
+      const makemkv = await getSharedMakeMKV();
+      const result = await makemkv.fetchLatestKey();
+      return result;
+    } catch (error) {
+      logger.error('settings', 'Failed to fetch MakeMKV key', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Apply MakeMKV key to Windows registry
+  ipcMain.handle('apply-makemkv-key', async (event, key) => {
+    try {
+      const makemkv = await getSharedMakeMKV();
+      const result = await makemkv.applyMakeMKVKey(key);
+      return result;
+    } catch (error) {
+      logger.error('settings', 'Failed to apply MakeMKV key', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Get current MakeMKV key from Windows registry
+  ipcMain.handle('get-makemkv-registry-key', async () => {
+    try {
+      const makemkv = await getSharedMakeMKV();
+      const result = await makemkv.getMakeMKVKeyFromRegistry();
+      return result;
+    } catch (error) {
+      logger.error('settings', 'Failed to get MakeMKV registry key', error);
+      return { success: false, error: error.message };
+    }
+  });
+
   // Get recent logs for troubleshooting
   ipcMain.handle('get-logs', async (event, lines = 200) => {
     try {

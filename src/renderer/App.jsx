@@ -882,6 +882,39 @@ function App() {
                 />
                 <small>Backups stored in: {editedSettings?.basePath}\backup</small>
               </div>
+              <div className="form-group">
+                <label>MakeMKV Beta Key:</label>
+                <div style={{display: 'flex', gap: '8px'}}>
+                  <input
+                    type="text"
+                    value={editedSettings?.makemkvKey || ''}
+                    onChange={e => setEditedSettings({...editedSettings, makemkvKey: e.target.value})}
+                    placeholder="T-xxxxxx..."
+                    style={{flex: 1}}
+                  />
+                  <button
+                    className="btn btn-sm"
+                    onClick={async () => {
+                      if (!window.electronAPI) return;
+                      try {
+                        const result = await window.electronAPI.fetchMakeMKVKey();
+                        if (result.success) {
+                          setEditedSettings({...editedSettings, makemkvKey: result.key});
+                          alert('Key fetched successfully!');
+                        } else {
+                          alert('Failed to fetch key: ' + result.error);
+                        }
+                      } catch (err) {
+                        alert('Error fetching key: ' + err.message);
+                      }
+                    }}
+                    title="Auto-fetch the latest beta key from MakeMKV forum"
+                  >
+                    Auto-Fetch
+                  </button>
+                </div>
+                <small>Beta registration key (applied to Windows registry on save). <a href="https://forum.makemkv.com/forum/viewtopic.php?t=1053" target="_blank" rel="noopener noreferrer" style={{color: '#4da6ff'}}>Get from forum</a></small>
+              </div>
               <hr style={{margin: '16px 0', borderColor: '#3d3d3d'}} />
               <div className="form-group">
                 <label>TMDB API Key:</label>

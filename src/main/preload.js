@@ -37,6 +37,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSettings: () => ipcRenderer.invoke('get-settings'),
   saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings),
 
+  // MakeMKV Key Management
+  fetchMakeMKVKey: () => ipcRenderer.invoke('fetch-makemkv-key'),
+  applyMakeMKVKey: (key) => ipcRenderer.invoke('apply-makemkv-key', key),
+  getMakeMKVRegistryKey: () => ipcRenderer.invoke('get-makemkv-registry-key'),
+
   // Logging and troubleshooting
   getLogs: (lines = 200) => ipcRenderer.invoke('get-logs', lines),
   getLogFiles: () => ipcRenderer.invoke('get-log-files'),
