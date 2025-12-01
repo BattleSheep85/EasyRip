@@ -205,17 +205,24 @@ async function initializeMetadataSystem() {
       metadataWatcher = getMetadataWatcher(backupPath, {
         intervalMs: metadataSettings.watcherIntervalMs || 30000,
         onPending: async (backup) => {
-          // Check if Live Dangerously mode is enabled - auto-approve everything
+          // Check if Live Dangerously mode is enabled - auto-approve high confidence items
           const settings = await makemkv.getSettings();
           if (settings.automation?.liveDangerously) {
-            logger.info('metadata', `[YOLO] Auto-approving ${backup.name}`);
             try {
               const fullBackupPath = path.join(backupPath, backup.name);
-              const result = await discIdentifier.approve(fullBackupPath);
-              if (result.success && exportWatcher) {
-                const metadata = await discIdentifier.loadMetadata(fullBackupPath);
-                exportWatcher.queueExport(backup.name, fullBackupPath, metadata);
-                logger.info('export', `[YOLO] Auto-queued ${backup.name} for export`);
+              const metadata = await discIdentifier.loadMetadata(fullBackupPath);
+              const confidence = metadata?.llmGuess?.confidence || 0;
+              const MIN_AUTO_APPROVE_CONFIDENCE = 0.85;
+
+              if (confidence >= MIN_AUTO_APPROVE_CONFIDENCE) {
+                logger.info('metadata', `[YOLO] Auto-approving ${backup.name} (confidence: ${(confidence * 100).toFixed(0)}%)`);
+                const result = await discIdentifier.approve(fullBackupPath);
+                if (result.success && exportWatcher) {
+                  exportWatcher.queueExport(backup.name, fullBackupPath, metadata);
+                  logger.info('export', `[YOLO] Auto-queued ${backup.name} for export`);
+                }
+              } else {
+                logger.info('metadata', `[YOLO] Skipping auto-approve for ${backup.name} - confidence too low (${(confidence * 100).toFixed(0)}% < 85%). Requires human review.`);
               }
             } catch (err) {
               logger.error('metadata', `[YOLO] Auto-approve failed for ${backup.name}`, err);

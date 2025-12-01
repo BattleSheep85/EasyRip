@@ -549,22 +549,50 @@ Analyze the disc label, duration, and other metadata to make your best guess. Co
 - TV show discs often have multiple episodes (30-60 minute titles)
 - The volume label often contains hints about the title
 
+CRITICAL CONFIDENCE SCORING RULES - You MUST follow these strictly:
+
+1. HIGH confidence (0.85-0.95): Only when the disc label clearly identifies a unique title with year or distinguishing info, OR the title is so unique it can only be one thing.
+
+2. MEDIUM confidence (0.50-0.70): When you can identify the title but:
+   - Multiple versions/remakes exist (e.g., "How to Train Your Dragon" has 2010 and 2019 versions)
+   - No year is determinable from the metadata
+   - The title is a franchise with multiple entries (sequels, series)
+
+3. LOW confidence (0.20-0.40): When:
+   - The disc label is very short/vague (under 10 characters)
+   - The label could match multiple unrelated titles
+   - Limited metadata makes identification speculative
+   - The title is obscure or could be a subtitle/alternate name
+
+4. VERY LOW confidence (0.05-0.15): When:
+   - The label is generic (e.g., "DISC1", "MOVIE", "VIDEO")
+   - No meaningful identification clues exist
+   - Pure guesswork based on duration alone
+
+If "year" cannot be determined with certainty, set it to null. Do NOT guess a year.
+If multiple versions exist and you cannot distinguish which one, your confidence MUST be 0.50 or lower.
+
 Respond with ONLY valid JSON in this exact format:
 {
   "title": "The Movie or Show Title",
   "year": 2023,
   "type": "movie",
   "confidence": 0.85,
-  "reasoning": "Brief explanation of why you identified it this way"
+  "reasoning": "Brief explanation including any ambiguity factors",
+  "hasMultipleVersions": false
 }
+
+Set "hasMultipleVersions" to true if you know multiple versions/remakes of this title exist.
+Set "year" to null if you cannot determine it from the disc metadata.
 
 For type, use "movie" or "tv". For TV shows, also include:
 {
   "title": "Show Name",
-  "year": 2020,
+  "year": null,
   "type": "tv",
-  "confidence": 0.75,
-  "reasoning": "...",
+  "confidence": 0.60,
+  "reasoning": "Identified as TV show but cannot determine specific season/version",
+  "hasMultipleVersions": true,
   "tvInfo": {
     "season": 1,
     "episodes": [1, 2, 3]
@@ -589,7 +617,8 @@ Important: Respond with ONLY the JSON object, no other text.`;
         type: parsed.type || 'movie',
         confidence: Math.min(1, Math.max(0, parsed.confidence || 0.5)),
         reasoning: parsed.reasoning || '',
-        tvInfo: parsed.tvInfo || null
+        tvInfo: parsed.tvInfo || null,
+        hasMultipleVersions: parsed.hasMultipleVersions || false
       };
     } catch {
       // Try to extract JSON from response
@@ -603,7 +632,8 @@ Important: Respond with ONLY the JSON object, no other text.`;
             type: parsed.type || 'movie',
             confidence: Math.min(1, Math.max(0, parsed.confidence || 0.5)),
             reasoning: parsed.reasoning || '',
-            tvInfo: parsed.tvInfo || null
+            tvInfo: parsed.tvInfo || null,
+            hasMultipleVersions: parsed.hasMultipleVersions || false
           };
         } catch {
           log.warn('Failed to parse extracted JSON');
@@ -617,7 +647,8 @@ Important: Respond with ONLY the JSON object, no other text.`;
         type: 'movie',
         confidence: 0,
         reasoning: 'Failed to parse LLM response',
-        tvInfo: null
+        tvInfo: null,
+        hasMultipleVersions: false
       };
     }
   }

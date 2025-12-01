@@ -52,6 +52,140 @@ export class DiscIdentifier {
   }
 
   /**
+   * Validate and adjust confidence based on TMDB results and input quality
+   * This provides a reality check on the LLM's confidence score
+   * @param {Object} llmGuess - The LLM's identification guess
+   * @param {Array} tmdbCandidates - TMDB search results
+   * @param {string} volumeLabel - Original disc volume label
+   * @returns {Object} Updated llmGuess with validated confidence and reasons
+   */
+  validateConfidence(llmGuess, tmdbCandidates, volumeLabel) {
+    if (!llmGuess || !llmGuess.title) {
+      return llmGuess;
+    }
+
+    let confidence = llmGuess.confidence || 0;
+    const adjustments = [];
+    const originalConfidence = confidence;
+
+    // 1. Input quality checks
+    const labelLength = (volumeLabel || '').trim().length;
+    const isGenericLabel = /^(disc|dvd|cd|video|movie|film|\d+)$/i.test((volumeLabel || '').trim());
+
+    if (labelLength < 5) {
+      // Very short labels provide minimal identification info
+      const maxAllowed = 0.30;
+      if (confidence > maxAllowed) {
+        confidence = maxAllowed;
+        adjustments.push(`Short label (<5 chars) caps confidence at ${maxAllowed * 100}%`);
+      }
+    } else if (labelLength < 10) {
+      // Short labels are still limited
+      const maxAllowed = 0.50;
+      if (confidence > maxAllowed) {
+        confidence = maxAllowed;
+        adjustments.push(`Short label (<10 chars) caps confidence at ${maxAllowed * 100}%`);
+      }
+    }
+
+    if (isGenericLabel) {
+      // Generic labels like "DISC1" or "MOVIE" provide no identification
+      const maxAllowed = 0.15;
+      if (confidence > maxAllowed) {
+        confidence = maxAllowed;
+        adjustments.push(`Generic label caps confidence at ${maxAllowed * 100}%`);
+      }
+    }
+
+    // 2. Missing year check
+    if (!llmGuess.year) {
+      // No year means we can't distinguish between versions/remakes
+      const maxAllowed = 0.60;
+      if (confidence > maxAllowed) {
+        confidence = maxAllowed;
+        adjustments.push(`Missing year caps confidence at ${maxAllowed * 100}%`);
+      }
+    }
+
+    // 3. Multiple versions flag from LLM
+    if (llmGuess.hasMultipleVersions && !llmGuess.year) {
+      // LLM knows multiple versions exist but can't determine which
+      const maxAllowed = 0.45;
+      if (confidence > maxAllowed) {
+        confidence = maxAllowed;
+        adjustments.push(`Multiple versions exist without year data caps at ${maxAllowed * 100}%`);
+      }
+    }
+
+    // 4. TMDB candidate analysis
+    if (tmdbCandidates && tmdbCandidates.length > 0) {
+      // Normalize the guessed title for comparison
+      const normalizeTitle = (t) => (t || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const guessedTitle = normalizeTitle(llmGuess.title);
+
+      // Find candidates with matching titles
+      const matchingCandidates = tmdbCandidates.filter(c => {
+        const candidateTitle = normalizeTitle(c.title);
+        return candidateTitle === guessedTitle ||
+               candidateTitle.includes(guessedTitle) ||
+               guessedTitle.includes(candidateTitle);
+      });
+
+      if (matchingCandidates.length > 1) {
+        // Multiple TMDB entries match the same title (remakes, versions, etc.)
+        const years = [...new Set(matchingCandidates.map(c => c.year).filter(Boolean))];
+
+        if (years.length > 1 && !llmGuess.year) {
+          // Multiple years for same title and we don't know which one
+          const yearSpread = Math.max(...years) - Math.min(...years);
+
+          if (yearSpread > 5) {
+            // Wide year spread (likely different versions/remakes)
+            const penalty = Math.min(0.30, yearSpread * 0.01);
+            const maxAllowed = 0.50 - penalty;
+            if (confidence > maxAllowed) {
+              confidence = Math.max(0.20, maxAllowed);
+              adjustments.push(`${matchingCandidates.length} TMDB matches spanning ${yearSpread} years reduces confidence`);
+            }
+          }
+        }
+      }
+
+      // Check if no candidates match at all
+      if (matchingCandidates.length === 0 && tmdbCandidates.length > 0) {
+        // LLM guess doesn't match any TMDB results
+        const maxAllowed = 0.40;
+        if (confidence > maxAllowed) {
+          confidence = maxAllowed;
+          adjustments.push(`No TMDB matches for guessed title caps at ${maxAllowed * 100}%`);
+        }
+      }
+    } else if (!tmdbCandidates || tmdbCandidates.length === 0) {
+      // No TMDB results at all - highly uncertain
+      const maxAllowed = 0.35;
+      if (confidence > maxAllowed) {
+        confidence = maxAllowed;
+        adjustments.push(`No TMDB results found caps at ${maxAllowed * 100}%`);
+      }
+    }
+
+    // Build updated reasoning
+    let reasoning = llmGuess.reasoning || '';
+    if (adjustments.length > 0) {
+      reasoning += ` [Confidence adjusted: ${adjustments.join('; ')}]`;
+      log.info(`Confidence adjusted from ${(originalConfidence * 100).toFixed(0)}% to ${(confidence * 100).toFixed(0)}%: ${adjustments.join('; ')}`);
+    }
+
+    return {
+      ...llmGuess,
+      confidence: Math.max(0, Math.min(1, confidence)),
+      reasoning,
+      confidenceAdjusted: adjustments.length > 0,
+      originalConfidence: adjustments.length > 0 ? originalConfidence : undefined
+    };
+  }
+
+  /**
    * Detect disc type from backup folder
    * @param {string} backupPath - Path to backup folder
    * @returns {string} Disc type: 'dvd', 'bluray', or 'unknown'
@@ -297,6 +431,20 @@ export class DiscIdentifier {
         }
       } else if (!this.tmdb.hasApiKey()) {
         log.warn('TMDB API key not configured');
+      }
+
+      // Step 6.5: Validate and adjust confidence based on TMDB results
+      if (llmGuess && !skipLLM) {
+        const validatedGuess = this.validateConfidence(
+          llmGuess,
+          metadata.tmdbCandidates,
+          volumeLabel
+        );
+        llmGuess = validatedGuess;
+        metadata.llmGuess = createLLMGuess(validatedGuess);
+        if (validatedGuess.confidenceAdjusted) {
+          log.info(`Validated confidence: ${(validatedGuess.confidence * 100).toFixed(0)}% (was ${(validatedGuess.originalConfidence * 100).toFixed(0)}%)`);
+        }
       }
 
       // Step 7: Generate final suggested name

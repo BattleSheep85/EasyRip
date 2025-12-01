@@ -106,14 +106,23 @@ export function createTitleEntry(titleData = {}) {
  * @returns {Object} Standardized LLM guess structure
  */
 export function createLLMGuess(guessData = {}) {
-  return {
+  const result = {
     title: guessData.title || null,
     year: guessData.year || null,
     type: guessData.type || MediaType.MOVIE,
     confidence: guessData.confidence ?? 0,
     reasoning: guessData.reasoning || '',
-    tvInfo: guessData.tvInfo || null // { season, episodes }
+    tvInfo: guessData.tvInfo || null, // { season, episodes }
+    hasMultipleVersions: guessData.hasMultipleVersions || false
   };
+
+  // Include confidence adjustment info if present
+  if (guessData.confidenceAdjusted) {
+    result.confidenceAdjusted = true;
+    result.originalConfidence = guessData.originalConfidence;
+  }
+
+  return result;
 }
 
 /**
