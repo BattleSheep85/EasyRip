@@ -1160,6 +1160,89 @@ function App() {
                   Test Connection
                 </button>
               </div>
+
+              {/* Library Maintenance Section */}
+              <>
+                <h4 style={{margin: '16px 0 12px 0', color: '#888'}}>Library Maintenance</h4>
+                <div className="form-group">
+                  <small style={{display: 'block', marginBottom: '8px', color: '#666'}}>
+                    Fix incorrect naming and add missing NFO metadata files to your Emby library.
+                    This will rename folders with [tmdbid=xxx] tags to proper Emby naming format.
+                    {editedSettings?.transfer?.protocol !== 'local' && (
+                      <span style={{color: '#f0ad4e'}}> Note: For SCP transfers, the paths above must be locally accessible (e.g., mapped network drive).</span>
+                    )}
+                  </small>
+                    <div style={{display: 'flex', gap: '8px'}}>
+                      <button
+                        className="btn btn-sm"
+                        onClick={async () => {
+                          if (!window.electronAPI) return;
+                          if (!editedSettings?.transfer?.moviePath) {
+                            alert('Please set a Movie Library Path first');
+                            return;
+                          }
+                          if (!confirm('This will scan your movie library and:\n\n' +
+                            '1. Rename folders from "Title [tmdbid=xxx]" to "Title (Year)"\n' +
+                            '2. Create missing movie.nfo files with metadata\n\n' +
+                            'Continue?')) {
+                            return;
+                          }
+                          try {
+                            // Save settings first so the path is available
+                            await window.electronAPI.saveSettings(editedSettings);
+                            const result = await window.electronAPI.fixMovieLibrary();
+                            if (result.success) {
+                              alert(`Movie library fix complete!\n\n` +
+                                `Scanned: ${result.results.scanned} folders\n` +
+                                `Renamed: ${result.results.renamed} folders\n` +
+                                `NFO files created: ${result.results.nfoCreated}\n` +
+                                `Errors: ${result.results.errors.length}`);
+                            } else {
+                              alert('Fix failed: ' + result.error);
+                            }
+                          } catch (err) {
+                            alert('Error: ' + err.message);
+                          }
+                        }}
+                      >
+                        Fix Movie Library
+                      </button>
+                      <button
+                        className="btn btn-sm"
+                        onClick={async () => {
+                          if (!window.electronAPI) return;
+                          if (!editedSettings?.transfer?.tvPath) {
+                            alert('Please set a TV Library Path first');
+                            return;
+                          }
+                          if (!confirm('This will scan your TV library and:\n\n' +
+                            '1. Rename series folders from "Title [tmdbid=xxx]" to "Title (Year)"\n' +
+                            '2. Create missing tvshow.nfo files with metadata\n\n' +
+                            'Continue?')) {
+                            return;
+                          }
+                          try {
+                            await window.electronAPI.saveSettings(editedSettings);
+                            const result = await window.electronAPI.fixTvLibrary();
+                            if (result.success) {
+                              alert(`TV library fix complete!\n\n` +
+                                `Scanned: ${result.results.scanned} series\n` +
+                                `Renamed: ${result.results.renamed} series\n` +
+                                `NFO files created: ${result.results.nfoCreated}\n` +
+                                `Errors: ${result.results.errors.length}`);
+                            } else {
+                              alert('Fix failed: ' + result.error);
+                            }
+                          } catch (err) {
+                            alert('Error: ' + err.message);
+                          }
+                        }}
+                      >
+                        Fix TV Library
+                      </button>
+                    </div>
+                  </div>
+              </>
             </div>
             <div className="modal-footer">
               <button className="btn" onClick={() => setShowSettings(false)}>Cancel</button>

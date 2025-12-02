@@ -244,4 +244,33 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Set all automation settings at once
   setAutomation: (automation) => ipcRenderer.invoke('set-automation', automation),
+
+  // ============================================
+  // LIBRARY FIXER APIs
+  // ============================================
+
+  // Fix movie library naming and add NFO files
+  fixMovieLibrary: (options = {}) => ipcRenderer.invoke('fix-movie-library', options),
+
+  // Fix TV library naming and add NFO files
+  fixTvLibrary: (options = {}) => ipcRenderer.invoke('fix-tv-library', options),
+
+  // Preview library changes (dry run)
+  previewLibraryFix: (libraryType = 'movie') => ipcRenderer.invoke('preview-library-fix', libraryType),
+
+  // Listen for library fix progress
+  onLibraryFixProgress: (callback) => {
+    ipcRenderer.on('library-fix-progress', (event, data) => callback(data));
+  },
+
+  // Listen for library fix log messages
+  onLibraryFixLog: (callback) => {
+    ipcRenderer.on('library-fix-log', (event, data) => callback(data));
+  },
+
+  // Remove library fix listeners (cleanup)
+  removeLibraryFixListeners: () => {
+    ipcRenderer.removeAllListeners('library-fix-progress');
+    ipcRenderer.removeAllListeners('library-fix-log');
+  },
 });

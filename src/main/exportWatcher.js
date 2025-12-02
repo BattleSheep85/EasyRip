@@ -19,6 +19,7 @@ import { EmbyExporter } from './emby.js';
 import { getTransferManager } from './transfer.js';
 import { getDiscIdentifier } from './metadata/identifier.js';
 import { MetadataStatus, MediaType } from './metadata/schemas.js';
+import { writeMovieNfo, writeTvShowNfo, writeEpisodeNfo } from './nfo.js';
 
 const log = {
   info: (msg, data) => logger.info('export-watcher', msg, data),
@@ -223,12 +224,35 @@ export class ExportWatcher {
         throw new Error(`${mediaType} library path not configured`);
       }
 
-      // Step 1: Scan titles to find main feature
-      this.emitProgress(job.name, 5, 'Scanning disc for titles...');
-      this.emitLog(job.name, 'Scanning disc for available titles...');
-
+      // Step 1: Scan titles to find main feature (or use cached scan)
       await this.init(); // Ensure embyExporter is initialized
-      const scanResult = await this.embyExporter.scanTitles(job.path);
+
+      let scanResult;
+      let usedCache = false;
+
+      // Check for cached title scan from previous export
+      if (job.metadata.titleScan?.titles?.length > 0) {
+        this.emitProgress(job.name, 5, 'Using cached title scan...');
+        this.emitLog(job.name, 'Using cached title scan from previous export (skipping MakeMKV scan)');
+        scanResult = job.metadata.titleScan;
+        usedCache = true;
+      } else {
+        this.emitProgress(job.name, 5, 'Scanning disc for titles...');
+        this.emitLog(job.name, 'Scanning disc for available titles...');
+        scanResult = await this.embyExporter.scanTitles(job.path);
+
+        // Cache the scan result for future re-exports
+        if (scanResult.titles?.length > 0) {
+          const titleScan = {
+            scannedAt: new Date().toISOString(),
+            discType: scanResult.discType,
+            mainFeatureIndex: scanResult.mainFeatureIndex,
+            titles: scanResult.titles
+          };
+          await this.identifier.update(job.path, { titleScan });
+          this.emitLog(job.name, 'Cached title scan for future re-exports');
+        }
+      }
 
       if (!scanResult.titles || scanResult.titles.length === 0) {
         throw new Error('No titles found in backup');
@@ -238,7 +262,7 @@ export class ExportWatcher {
       const mainFeature = scanResult.titles.find(t => t.isMainFeature) ||
                          scanResult.titles[0];
 
-      this.emitLog(job.name, `Found ${scanResult.titles.length} titles. Main feature: Title ${mainFeature.index} (${mainFeature.durationDisplay})`);
+      this.emitLog(job.name, `${usedCache ? 'Cached: ' : 'Found '}${scanResult.titles.length} titles. Main feature: Title ${mainFeature.index} (${mainFeature.durationDisplay})`);
 
       // Step 2: Generate output path and filename
       const tvInfo = job.metadata.tvInfo || null;
@@ -250,6 +274,10 @@ export class ExportWatcher {
         tvInfo: tvInfo, // TV episode info from metadata
         embyLibraryPath: libraryPath
       });
+
+      // Calculate relative path for folder structure (e.g., "Title (Year)/Title (Year).mkv" or "Series (Year)/Season XX/Series - SXXEXX.mkv")
+      const folderRelative = path.relative(libraryPath, outputInfo.folderPath);
+      const relativePath = path.join(folderRelative, outputInfo.fileName);
 
       // Create temp output directory for remux
       const tempDir = path.join(path.dirname(job.path), '_export_temp');
@@ -276,6 +304,60 @@ export class ExportWatcher {
 
       this.emitLog(job.name, `Remux complete: ${remuxResult.path}`);
 
+      // Step 3.5: Generate NFO file in temp directory
+      this.emitProgress(job.name, 65, 'Generating NFO metadata...');
+      let tempNfoPath = null;
+      let nfoRelativePath = null;
+
+      try {
+        if (mediaType === MediaType.TV && tvInfo) {
+          // TV episode NFO
+          const nfoFileName = outputInfo.fileName.replace('.mkv', '.nfo');
+          tempNfoPath = path.join(tempDir, nfoFileName);
+          nfoRelativePath = path.join(folderRelative, nfoFileName);
+
+          await writeEpisodeNfo(tempMkvPath, {
+            title: tvInfo.episodeTitle || `Episode ${tvInfo.episode}`,
+            showTitle: job.metadata.final?.title || '',
+            season: tvInfo.season || 1,
+            episode: tvInfo.episode || 1,
+            overview: tvInfo.overview || job.metadata.tmdb?.overview || '',
+            airDate: tvInfo.airDate || '',
+            runtime: job.metadata.tmdb?.runtime || '',
+            rating: job.metadata.tmdb?.vote_average || '',
+            tmdbId: job.metadata.tmdb?.id || ''
+          });
+          this.emitLog(job.name, 'Generated episode NFO');
+        } else {
+          // Movie NFO
+          tempNfoPath = path.join(tempDir, 'movie.nfo');
+          nfoRelativePath = path.join(folderRelative, 'movie.nfo');
+
+          await writeMovieNfo(tempDir, {
+            title: job.metadata.final?.title || job.metadata.disc?.volumeLabel || job.name,
+            year: job.metadata.final?.year || '',
+            tmdbId: job.metadata.tmdb?.id || '',
+            imdbId: job.metadata.tmdb?.imdb_id || '',
+            overview: job.metadata.tmdb?.overview || '',
+            releaseDate: job.metadata.tmdb?.release_date || '',
+            runtime: job.metadata.tmdb?.runtime || '',
+            genres: job.metadata.tmdb?.genres || [],
+            cast: job.metadata.tmdb?.credits?.cast || [],
+            crew: job.metadata.tmdb?.credits?.crew || [],
+            rating: job.metadata.tmdb?.vote_average || '',
+            voteCount: job.metadata.tmdb?.vote_count || '',
+            tagline: job.metadata.tmdb?.tagline || '',
+            originalTitle: job.metadata.tmdb?.original_title || '',
+            originalLanguage: job.metadata.tmdb?.original_language || '',
+            productionCompanies: job.metadata.tmdb?.production_companies || []
+          });
+          this.emitLog(job.name, 'Generated movie NFO');
+        }
+      } catch (nfoErr) {
+        log.warn(`NFO generation warning: ${nfoErr.message}`);
+        this.emitLog(job.name, `Warning: Could not generate NFO: ${nfoErr.message}`);
+      }
+
       // Step 4: Transfer to destination
       this.emitProgress(job.name, 70, 'Transferring to library...');
       this.emitLog(job.name, `Transferring via ${transferConfig.protocol.toUpperCase()}...`);
@@ -285,8 +367,7 @@ export class ExportWatcher {
         {
           ...transferConfig,
           mediaType,
-          // For local/UNC, moviePath/tvPath are the destinations
-          // For remote protocols, they're remote paths
+          relativePath, // Folder structure: "Title (Year)/Title (Year).mkv" or "Series (Year)/Season XX/file.mkv"
         },
         (percent) => {
           // Scale transfer progress from 70% to 95%
@@ -297,6 +378,27 @@ export class ExportWatcher {
           this.emitLog(job.name, message);
         }
       );
+
+      // Step 4.5: Transfer NFO file if it was generated
+      if (tempNfoPath && nfoRelativePath) {
+        try {
+          this.emitLog(job.name, 'Transferring NFO metadata file...');
+          await this.transferManager.transfer(
+            tempNfoPath,
+            {
+              ...transferConfig,
+              mediaType,
+              relativePath: nfoRelativePath,
+            },
+            null, // No progress callback for small NFO file
+            null  // No log callback
+          );
+          this.emitLog(job.name, 'NFO transferred successfully');
+        } catch (nfoTransferErr) {
+          log.warn(`NFO transfer warning: ${nfoTransferErr.message}`);
+          this.emitLog(job.name, `Warning: Could not transfer NFO: ${nfoTransferErr.message}`);
+        }
+      }
 
       // Step 5: Clean up temp file
       this.emitProgress(job.name, 95, 'Cleaning up...');

@@ -80,7 +80,17 @@ export function createEmptyMetadata(discInfo = {}) {
       year: null,
       sortTitle: null,
       suggestedFolderName: null
-    }
+    },
+
+    // Cached title scan from MakeMKV (populated on first export, reused on re-export)
+    titleScan: null
+    // Structure when populated:
+    // {
+    //   scannedAt: ISO timestamp,
+    //   discType: 'dvd' | 'bluray',
+    //   mainFeatureIndex: number,
+    //   titles: [{ index, name, duration, durationDisplay, size, sizeDisplay, chapters, isMainFeature }]
+    // }
   };
 }
 

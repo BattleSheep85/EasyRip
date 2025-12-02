@@ -6,8 +6,10 @@ node_modules/
 dist/
 dist-renderer/
 dist-electron/
-build/
 out/
+
+# Build resources (keep build/ but exclude bundled installers)
+build/installers/*.exe
 
 # Environment
 .env

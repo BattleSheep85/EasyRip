@@ -23,6 +23,9 @@ import { getARMDatabase } from './metadata/arm-database.js';
 // Emby export system
 import { EmbyExporter } from './emby.js';
 
+// Library fixer (rename/fix existing Emby library items)
+import { LibraryFixer } from './libraryFixer.js';
+
 // Transfer system
 import { getTransferManager } from './transfer.js';
 
@@ -126,7 +129,9 @@ function createWindow() {
     });
     mainWindow.webContents.openDevTools();
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
+    // In production, load the built renderer from dist-renderer
+    // __dirname is app.asar/src/main, so go up twice to reach app.asar root
+    mainWindow.loadFile(path.join(__dirname, '../../dist-renderer/index.html'));
   }
 
   // Initialize drive detector (fast Windows-based detection)
@@ -1202,6 +1207,7 @@ function setupIPC() {
       }
 
       // Get the backup path and metadata
+      const makemkv = await getSharedMakeMKV();
       const settings = await makemkv.getSettings();
       const backupPath = path.join(settings.basePath, 'backup', backupName);
       const metadata = await discIdentifier.loadMetadata(backupPath);
@@ -1382,6 +1388,146 @@ function setupIPC() {
       return { success: true, automation };
     } catch (error) {
       logger.error('automation', 'Failed to set automation settings', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // ===========================================
+  // Library Fixer IPC Handlers
+  // ===========================================
+
+  // Fix movie library naming and add NFO files
+  ipcMain.handle('fix-movie-library', async (event, options = {}) => {
+    try {
+      const makemkv = await getSharedMakeMKV();
+      const settings = await makemkv.getSettings();
+
+      // Get library path from transfer settings
+      const libraryPath = settings.transfer?.moviePath;
+      if (!libraryPath) {
+        throw new Error('No movie library path configured in Transfer Settings');
+      }
+
+      // Get TMDB API key for metadata lookup
+      const tmdbApiKey = settings.tmdbApiKey;
+
+      // Create library fixer with TMDB client
+      const fixer = new LibraryFixer(tmdbApiKey);
+
+      logger.info('library-fixer', `Starting movie library fix: ${libraryPath}`);
+
+      // Send progress updates to renderer
+      const onProgress = (progress) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('library-fix-progress', {
+            type: 'movie',
+            ...progress
+          });
+        }
+      };
+
+      const onLog = (message) => {
+        logger.info('library-fixer', message);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('library-fix-log', message);
+        }
+      };
+
+      const results = await fixer.fixMovieLibrary(libraryPath, {
+        dryRun: options.dryRun || false,
+        onProgress,
+        onLog
+      });
+
+      return { success: true, results };
+    } catch (error) {
+      logger.error('library-fixer', `Failed to fix movie library: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Fix TV library naming and add NFO files
+  ipcMain.handle('fix-tv-library', async (event, options = {}) => {
+    try {
+      const makemkv = await getSharedMakeMKV();
+      const settings = await makemkv.getSettings();
+
+      // Get TV library path from transfer settings
+      const libraryPath = settings.transfer?.tvPath;
+      if (!libraryPath) {
+        throw new Error('No TV library path configured in Transfer Settings');
+      }
+
+      const tmdbApiKey = settings.tmdbApiKey;
+      const fixer = new LibraryFixer(tmdbApiKey);
+
+      logger.info('library-fixer', `Starting TV library fix: ${libraryPath}`);
+
+      const onProgress = (progress) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('library-fix-progress', {
+            type: 'tv',
+            ...progress
+          });
+        }
+      };
+
+      const onLog = (message) => {
+        logger.info('library-fixer', message);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('library-fix-log', message);
+        }
+      };
+
+      const results = await fixer.fixTvLibrary(libraryPath, {
+        dryRun: options.dryRun || false,
+        onProgress,
+        onLog
+      });
+
+      return { success: true, results };
+    } catch (error) {
+      logger.error('library-fixer', `Failed to fix TV library: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Preview library changes (dry run)
+  ipcMain.handle('preview-library-fix', async (event, libraryType = 'movie') => {
+    try {
+      const makemkv = await getSharedMakeMKV();
+      const settings = await makemkv.getSettings();
+
+      let libraryPath;
+      if (libraryType === 'tv') {
+        libraryPath = settings.transfer?.tvPath;
+      } else {
+        libraryPath = settings.transfer?.moviePath;
+      }
+
+      if (!libraryPath) {
+        throw new Error(`No ${libraryType} library path configured in Transfer Settings`);
+      }
+
+      const tmdbApiKey = settings.tmdbApiKey;
+      const fixer = new LibraryFixer(tmdbApiKey);
+
+      logger.info('library-fixer', `Previewing ${libraryType} library fix: ${libraryPath}`);
+
+      const onLog = (message) => {
+        logger.debug('library-fixer-preview', message);
+      };
+
+      let results;
+      if (libraryType === 'tv') {
+        results = await fixer.fixTvLibrary(libraryPath, { dryRun: true, onLog });
+      } else {
+        results = await fixer.fixMovieLibrary(libraryPath, { dryRun: true, onLog });
+      }
+
+      return { success: true, results, libraryPath };
+    } catch (error) {
+      logger.error('library-fixer', `Failed to preview library fix: ${error.message}`);
       return { success: false, error: error.message };
     }
   });

@@ -541,9 +541,26 @@ export class DiscIdentifier {
       };
     }
 
+    // Cache title scan results for re-exports
+    if (updates.titleScan) {
+      metadata.titleScan = updates.titleScan;
+    }
+
+    // Export tracking
+    if (updates.exported) {
+      metadata.exported = updates.exported;
+    }
+    if (updates.exportError !== undefined) {
+      metadata.exportError = updates.exportError;
+    }
+    if (updates.exportErrorAt !== undefined) {
+      metadata.exportErrorAt = updates.exportErrorAt;
+    }
+
     if (updates.status) {
       metadata.status = updates.status;
-    } else {
+    } else if (!updates.titleScan && !updates.exported && !updates.exportError) {
+      // Only set to MANUAL if this isn't just a cache/export update
       metadata.status = MetadataStatus.MANUAL;
     }
 

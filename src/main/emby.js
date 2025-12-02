@@ -11,6 +11,12 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import logger from './logger.js';
 import { MediaType } from './metadata/schemas.js';
+import {
+  writeMovieNfo,
+  writeTvShowNfo,
+  writeEpisodeNfo,
+  sanitizeFilename
+} from './nfo.js';
 
 // MakeMKV TINFO attribute codes (from apdefs.h)
 const TINFO_CODES = {
@@ -301,14 +307,14 @@ export class EmbyExporter {
   }
 
   /**
-   * Export a backup to Emby library with proper naming
+   * Export a backup to Emby library with proper naming and NFO metadata
    * @param {Object} options - Export options
    * @param {string} options.backupPath - Path to backup folder
    * @param {number} options.titleIndex - Title index to export
-   * @param {Object} options.metadata - Metadata with final title/year/tmdbId
+   * @param {Object} options.metadata - Metadata with final title/year/tmdbId and TMDB details
    * @param {string} options.embyLibraryPath - Emby library base path
    * @param {string} options.mediaType - 'movie' or 'tv'
-   * @param {Object} options.tvInfo - For TV: { season, episode } numbers
+   * @param {Object} options.tvInfo - For TV: { season, episode, episodeTitle } numbers
    * @param {Function} onProgress - Progress callback
    * @param {Function} onLog - Log callback
    */
@@ -323,10 +329,9 @@ export class EmbyExporter {
     } = options;
 
     // Generate Emby-compatible path and filename
-    const { folderPath, fileName } = this.generateEmbyPath({
+    const { folderPath, fileName, seriesFolderPath } = this.generateEmbyPath({
       title: metadata.final?.title || metadata.disc?.volumeLabel || 'Unknown',
       year: metadata.final?.year || null,
-      tmdbId: metadata.tmdb?.id || null,
       mediaType,
       tvInfo,
       embyLibraryPath
@@ -345,23 +350,100 @@ export class EmbyExporter {
       onLog
     );
 
+    // Generate NFO file for Emby identification
+    try {
+      if (onLog) onLog('Generating NFO metadata file...');
+
+      if (mediaType === MediaType.TV && tvInfo) {
+        // For TV: create tvshow.nfo at series root (if not exists) and episode NFO
+        const tvShowNfoPath = path.join(seriesFolderPath, 'tvshow.nfo');
+        const tvShowNfoExists = await fs.access(tvShowNfoPath).then(() => true).catch(() => false);
+
+        if (!tvShowNfoExists && metadata.tmdb) {
+          // Create tvshow.nfo with series metadata
+          await writeTvShowNfo(seriesFolderPath, {
+            title: metadata.final?.title || metadata.tmdb?.name || 'Unknown',
+            year: metadata.final?.year || '',
+            tmdbId: metadata.tmdb?.id || '',
+            imdbId: metadata.tmdb?.external_ids?.imdb_id || '',
+            overview: metadata.tmdb?.overview || '',
+            firstAirDate: metadata.tmdb?.first_air_date || '',
+            genres: metadata.tmdb?.genres || [],
+            cast: metadata.tmdb?.credits?.cast || [],
+            rating: metadata.tmdb?.vote_average || '',
+            voteCount: metadata.tmdb?.vote_count || '',
+            status: metadata.tmdb?.status || '',
+            originalTitle: metadata.tmdb?.original_name || '',
+            originalLanguage: metadata.tmdb?.original_language || '',
+            networks: metadata.tmdb?.networks || [],
+            productionCompanies: metadata.tmdb?.production_companies || []
+          });
+          if (onLog) onLog('Created tvshow.nfo');
+        }
+
+        // Create episode NFO
+        await writeEpisodeNfo(outputPath, {
+          title: tvInfo.episodeTitle || `Episode ${tvInfo.episode}`,
+          showTitle: metadata.final?.title || '',
+          season: tvInfo.season || 1,
+          episode: tvInfo.episode || 1,
+          overview: tvInfo.overview || '',
+          airDate: tvInfo.airDate || '',
+          runtime: tvInfo.runtime || '',
+          rating: tvInfo.rating || '',
+          voteCount: tvInfo.voteCount || '',
+          tmdbId: tvInfo.tmdbId || ''
+        });
+        if (onLog) onLog('Created episode NFO');
+      } else {
+        // For movies: create movie.nfo in the movie folder
+        await writeMovieNfo(folderPath, {
+          title: metadata.final?.title || metadata.tmdb?.title || 'Unknown',
+          year: metadata.final?.year || '',
+          tmdbId: metadata.tmdb?.id || '',
+          imdbId: metadata.tmdb?.imdb_id || metadata.tmdb?.external_ids?.imdb_id || '',
+          overview: metadata.tmdb?.overview || '',
+          releaseDate: metadata.tmdb?.release_date || '',
+          runtime: metadata.tmdb?.runtime || '',
+          genres: metadata.tmdb?.genres || [],
+          cast: metadata.tmdb?.credits?.cast || [],
+          crew: metadata.tmdb?.credits?.crew || [],
+          rating: metadata.tmdb?.vote_average || '',
+          voteCount: metadata.tmdb?.vote_count || '',
+          tagline: metadata.tmdb?.tagline || '',
+          originalTitle: metadata.tmdb?.original_title || '',
+          originalLanguage: metadata.tmdb?.original_language || '',
+          productionCompanies: metadata.tmdb?.production_companies || ''
+        });
+        if (onLog) onLog('Created movie.nfo');
+      }
+    } catch (nfoErr) {
+      logger.error('emby', `Failed to create NFO: ${nfoErr.message}`);
+      if (onLog) onLog(`Warning: Could not create NFO file: ${nfoErr.message}`);
+      // Don't fail the export if NFO creation fails
+    }
+
     logger.info('emby', `Export complete: ${outputPath}`);
     return {
       ...result,
       embyPath: outputPath,
       folderPath,
-      fileName
+      fileName,
+      seriesFolderPath
     };
   }
 
   /**
    * Generate Emby-compatible folder path and filename
+   * Follows Emby naming best practices:
+   * - Movies: "Title (Year)/Title (Year).mkv" with movie.nfo
+   * - TV: "Series (Year)/Season XX/Series - SXXEXX - Episode Title.mkv" with tvshow.nfo
    */
-  generateEmbyPath({ title, year, tmdbId, mediaType, tvInfo, embyLibraryPath }) {
-    // Sanitize title for filesystem
-    const safeTitle = this.sanitizeFilename(title);
+  generateEmbyPath({ title, year, mediaType, tvInfo, embyLibraryPath }) {
+    // Sanitize title for filesystem (handles colons, etc.)
+    const safeTitle = sanitizeFilename(title);
 
-    // Build folder name: "Title (Year)" or "Title (Year) [tmdbid=xxx]"
+    // Build folder name: "Title (Year)"
     let folderName = safeTitle;
     if (year) {
       folderName += ` (${year})`;
@@ -369,32 +451,33 @@ export class EmbyExporter {
 
     let fileName;
     let folderPath;
+    let seriesFolderPath;
 
     if (mediaType === MediaType.TV && tvInfo) {
-      // TV Show: Series (Year)/Season XX/Series SXXEXX.mkv
+      // TV Show: Series (Year)/Season XX/Series - SXXEXX - Episode Title.mkv
       const seasonNum = String(tvInfo.season || 1).padStart(2, '0');
       const episodeNum = String(tvInfo.episode || 1).padStart(2, '0');
+      const episodeCode = `S${seasonNum}E${episodeNum}`;
 
-      folderPath = path.join(
-        embyLibraryPath,
-        folderName,
-        `Season ${seasonNum}`
-      );
-      fileName = `${safeTitle} S${seasonNum}E${episodeNum}.mkv`;
+      seriesFolderPath = path.join(embyLibraryPath, folderName);
+      folderPath = path.join(seriesFolderPath, `Season ${seasonNum}`);
+
+      // Include episode title if available for better identification
+      if (tvInfo.episodeTitle) {
+        const safeEpisodeTitle = sanitizeFilename(tvInfo.episodeTitle);
+        fileName = `${safeTitle} - ${episodeCode} - ${safeEpisodeTitle}.mkv`;
+      } else {
+        fileName = `${safeTitle} - ${episodeCode}.mkv`;
+      }
     } else {
       // Movie: Title (Year)/Title (Year).mkv
-      if (tmdbId) {
-        // Optionally include TMDB ID for better matching
-        folderName += ` [tmdbid=${tmdbId}]`;
-      }
-
+      // NFO file handles TMDB identification, no need for [tmdbid=xxx] in folder name
       folderPath = path.join(embyLibraryPath, folderName);
-      fileName = `${safeTitle}`;
-      if (year) fileName += ` (${year})`;
-      fileName += '.mkv';
+      seriesFolderPath = folderPath; // For consistency
+      fileName = `${folderName}.mkv`;
     }
 
-    return { folderPath, fileName };
+    return { folderPath, fileName, seriesFolderPath };
   }
 
   /**
@@ -423,15 +506,6 @@ export class EmbyExporter {
     return parseInt(durationStr) || 0;
   }
 
-  /**
-   * Sanitize filename for filesystem
-   */
-  sanitizeFilename(name) {
-    return (name || 'Unknown')
-      .replace(/[<>:"/\\|?*]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim();
-  }
 
   /**
    * Format bytes to human readable

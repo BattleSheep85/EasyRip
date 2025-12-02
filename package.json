@@ -9,6 +9,9 @@
     "build": "vite build",
     "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .\"",
     "electron:build": "npm run build && electron-builder",
+    "dist": "npm run build && electron-builder --win",
+    "dist:dir": "npm run build && electron-builder --win --dir",
+    "generate-icon": "node scripts/generate-icon.js",
     "start": "electron .",
     "test": "node --test tests/utils.test.js",
     "test:utils": "node --test tests/utils.test.js",
@@ -31,6 +34,8 @@
     "electron": "^28.1.0",
     "electron-builder": "^24.9.1",
     "playwright": "^1.57.0",
+    "png-to-ico": "^3.0.1",
+    "sharp": "^0.34.5",
     "vite": "^5.0.11",
     "wait-on": "^7.2.0"
   },
@@ -42,17 +47,40 @@
   "build": {
     "appId": "com.easyrip.app",
     "productName": "EasyRip",
+    "copyright": "Copyright © 2024",
     "directories": {
-      "output": "dist"
-    },
-    "win": {
-      "target": "nsis",
-      "icon": "build/icon.ico"
+      "output": "dist",
+      "buildResources": "build"
     },
     "files": [
       "src/**/*",
-      "dist-electron/**/*",
-      "package.json"
-    ]
+      "dist-renderer/**/*",
+      "package.json",
+      "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "build/installers",
+        "to": "installers",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "EasyRip",
+      "include": "build/installer.nsh"
+    },
+    "asar": true
   }
 }

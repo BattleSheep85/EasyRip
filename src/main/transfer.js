@@ -31,6 +31,7 @@ export class TransferManager {
    * Transfer a file using configured protocol
    * @param {string} sourcePath - Local source file path
    * @param {Object} config - Transfer configuration
+   * @param {Object} config.relativePath - Relative path including folder structure (e.g., "Title (Year)/Title (Year).mkv")
    * @param {Function} onProgress - Progress callback (0-100)
    * @param {Function} onLog - Log callback
    * @returns {Promise<{success: boolean, remotePath: string}>}
@@ -38,7 +39,7 @@ export class TransferManager {
   async transfer(sourcePath, config, onProgress, onLog) {
     const { protocol } = config;
 
-    logger.info('transfer', `Starting ${protocol} transfer: ${path.basename(sourcePath)}`);
+    logger.info('transfer', `Starting ${protocol} transfer: ${config.relativePath || path.basename(sourcePath)}`);
     if (onLog) onLog(`Starting ${protocol.toUpperCase()} transfer...`);
 
     try {
@@ -65,19 +66,20 @@ export class TransferManager {
    * Local file system copy
    */
   async transferLocal(sourcePath, config, onProgress, onLog) {
-    const { localPath, moviePath, tvPath, mediaType } = config;
+    const { moviePath, tvPath, mediaType, relativePath } = config;
     const destBase = mediaType === 'tv' ? tvPath : moviePath;
 
     if (!destBase) {
       throw new Error(`${mediaType} library path not configured`);
     }
 
-    const fileName = path.basename(sourcePath);
-    const destPath = path.join(destBase, fileName);
+    // Use relativePath for folder structure, fallback to just filename
+    const destRelative = relativePath || path.basename(sourcePath);
+    const destPath = path.join(destBase, destRelative);
 
     if (onLog) onLog(`Copying to: ${destPath}`);
 
-    // Ensure destination directory exists
+    // Ensure destination directory exists (including movie/tv subfolder)
     await fs.mkdir(path.dirname(destPath), { recursive: true });
 
     // Get source size for progress
@@ -95,15 +97,16 @@ export class TransferManager {
    * UNC/SMB network path copy (Windows)
    */
   async transferUNC(sourcePath, config, onProgress, onLog) {
-    const { uncPath, moviePath, tvPath, mediaType, username, password } = config;
+    const { uncPath, moviePath, tvPath, mediaType, username, password, relativePath } = config;
     const destBase = mediaType === 'tv' ? (tvPath || uncPath) : (moviePath || uncPath);
 
     if (!destBase) {
       throw new Error(`${mediaType} library path not configured`);
     }
 
-    const fileName = path.basename(sourcePath);
-    const destPath = path.join(destBase, fileName);
+    // Use relativePath for folder structure, fallback to just filename
+    const destRelative = relativePath || path.basename(sourcePath);
+    const destPath = path.join(destBase, destRelative);
 
     // For UNC paths with credentials, we might need to establish connection first
     // On Windows, this is typically handled by the OS or net use command
@@ -114,7 +117,7 @@ export class TransferManager {
 
     if (onLog) onLog(`Copying to: ${destPath}`);
 
-    // Ensure destination directory exists
+    // Ensure destination directory exists (including movie/tv subfolder)
     await fs.mkdir(path.dirname(destPath), { recursive: true });
 
     const stat = await fs.stat(sourcePath);
@@ -128,7 +131,7 @@ export class TransferManager {
    * SFTP/SCP transfer (uses ssh2-sftp-client)
    */
   async transferSFTP(sourcePath, config, onProgress, onLog) {
-    const { host, port = 22, username, password, privateKey, remotePath, moviePath, tvPath, mediaType } = config;
+    const { host, port = 22, username, password, privateKey, moviePath, tvPath, mediaType, relativePath } = config;
     const destBase = mediaType === 'tv' ? tvPath : moviePath;
 
     if (!destBase) {
@@ -145,8 +148,9 @@ export class TransferManager {
     }
 
     const sftp = new SftpClient();
-    const fileName = path.basename(sourcePath);
-    const remoteDest = `${destBase}/${fileName}`.replace(/\\/g, '/');
+    // Use relativePath for folder structure, fallback to just filename
+    const destRelative = relativePath || path.basename(sourcePath);
+    const remoteDest = `${destBase}/${destRelative}`.replace(/\\/g, '/');
 
     try {
       if (onLog) onLog(`Connecting to ${host}:${port}...`);
@@ -198,7 +202,7 @@ export class TransferManager {
    * FTP transfer (uses basic-ftp)
    */
   async transferFTP(sourcePath, config, onProgress, onLog) {
-    const { host, port = 21, username, password, secure = false, moviePath, tvPath, mediaType } = config;
+    const { host, port = 21, username, password, secure = false, moviePath, tvPath, mediaType, relativePath } = config;
     const destBase = mediaType === 'tv' ? tvPath : moviePath;
 
     if (!destBase) {
@@ -215,8 +219,9 @@ export class TransferManager {
     }
 
     const client = new ftp.Client();
-    const fileName = path.basename(sourcePath);
-    const remoteDest = `${destBase}/${fileName}`.replace(/\\/g, '/');
+    // Use relativePath for folder structure, fallback to just filename
+    const destRelative = relativePath || path.basename(sourcePath);
+    const remoteDest = `${destBase}/${destRelative}`.replace(/\\/g, '/');
 
     try {
       if (onLog) onLog(`Connecting to ${host}:${port}${secure ? ' (TLS)' : ''}...`);
