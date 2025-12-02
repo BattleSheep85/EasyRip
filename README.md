@@ -15,22 +15,23 @@ A simple, portable Windows GUI for automated disc backup using MakeMKV.
 - **Media Library Export** - Export backups to Emby/Jellyfin with proper naming and NFO files
 - **Multi-Protocol Transfer** - Local, UNC/SMB, SFTP, SCP, and FTP support
 - **Automation Options** - Auto-backup, auto-metadata, auto-export, and auto-eject
-- **Portable** - Single executable, no installation required
+- **Easy Install** - Installer automatically offers to install MakeMKV and 7-Zip if missing
 
 ## Quick Start
 
 ### Requirements
 
 - **Windows 10/11** (64-bit)
-- **[MakeMKV](https://www.makemkv.com/)** installed (default path: `C:\Program Files (x86)\MakeMKV\`)
 - Optical drive(s) with DVD or Blu-ray disc
 
-### Running EasyRip
+### Installation
 
-1. Download `EasyRip-x.x.x-portable.exe` from [Releases](https://github.com/BattleSheep85/EasyRip/releases)
-2. Run the executable - no installation needed
-3. Insert a disc and click **Refresh Drives**
-4. Click **Backup** to start ripping
+1. Download `EasyRip Setup x.x.x.exe` from [Releases](https://github.com/BattleSheep85/EasyRip/releases)
+2. Run the installer
+3. If MakeMKV is not installed, the installer will offer to install it
+4. Launch EasyRip from the Start Menu or Desktop shortcut
+5. Insert a disc and click **Refresh Drives**
+6. Click **Backup** to start ripping
 
 ## Configuration
 
@@ -269,7 +270,7 @@ EasyRip/
 
 ```bash
 npm run dist
-# Creates: dist/EasyRip-0.1.0-portable.exe (~85MB)
+# Creates: dist/EasyRip Setup 0.1.0.exe (~100MB installer)
 ```
 
 ## Troubleshooting
