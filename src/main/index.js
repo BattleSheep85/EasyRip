@@ -210,27 +210,22 @@ async function initializeMetadataSystem() {
       metadataWatcher = getMetadataWatcher(backupPath, {
         intervalMs: metadataSettings.watcherIntervalMs || 30000,
         onPending: async (backup) => {
-          // Check if Live Dangerously mode is enabled - auto-approve high confidence items
+          // Check if Live Dangerously mode is enabled - auto-approve EVERYTHING regardless of confidence
           const settings = await makemkv.getSettings();
           if (settings.automation?.liveDangerously) {
             try {
               const fullBackupPath = path.join(backupPath, backup.name);
               const metadata = await discIdentifier.loadMetadata(fullBackupPath);
               const confidence = metadata?.llmGuess?.confidence || 0;
-              const MIN_AUTO_APPROVE_CONFIDENCE = 0.85;
 
-              if (confidence >= MIN_AUTO_APPROVE_CONFIDENCE) {
-                logger.info('metadata', `[YOLO] Auto-approving ${backup.name} (confidence: ${(confidence * 100).toFixed(0)}%)`);
-                const result = await discIdentifier.approve(fullBackupPath);
-                if (result.success && exportWatcher) {
-                  exportWatcher.queueExport(backup.name, fullBackupPath, metadata);
-                  logger.info('export', `[YOLO] Auto-queued ${backup.name} for export`);
-                }
-              } else {
-                logger.info('metadata', `[YOLO] Skipping auto-approve for ${backup.name} - confidence too low (${(confidence * 100).toFixed(0)}% < 85%). Requires human review.`);
+              logger.info('metadata', `[LiveDangerously] Auto-approving ${backup.name} regardless of confidence (${(confidence * 100).toFixed(0)}%)`);
+              const result = await discIdentifier.approve(fullBackupPath);
+              if (result.success && exportWatcher) {
+                exportWatcher.queueExport(backup.name, fullBackupPath, metadata);
+                logger.info('export', `[LiveDangerously] Auto-queued ${backup.name} for export`);
               }
             } catch (err) {
-              logger.error('metadata', `[YOLO] Auto-approve failed for ${backup.name}`, err);
+              logger.error('metadata', `[LiveDangerously] Auto-approve failed for ${backup.name}`, err);
             }
           }
           // Always notify UI
@@ -1402,10 +1397,10 @@ function setupIPC() {
     try {
       const makemkv = await getSharedMakeMKV();
       const settings = await makemkv.getSettings();
-      const automation = settings.automation || { autoBackup: false, autoMeta: true, autoExport: false, liveDangerously: false, ejectAfterBackup: false };
+      const automation = settings.automation || { autoBackup: false, autoMeta: true, autoExport: false, autoApproveAll: false, ejectAfterBackup: false, autoApproveThreshold: 0.70 };
 
-      // Toggle the specified key
-      if (key in automation) {
+      // Toggle the specified key (only boolean keys can be toggled)
+      if (key in automation && typeof automation[key] === 'boolean') {
         automation[key] = !automation[key];
         await makemkv.saveSettings({ ...settings, automation });
         logger.info('automation', `Toggled ${key} to ${automation[key]}`);

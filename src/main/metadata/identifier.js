@@ -33,6 +33,77 @@ const log = {
 const METADATA_FILENAME = 'metadata.json';
 
 /**
+ * Analyze volume label for TV show patterns
+ * Detects season markers (S1, S01, SEASON1, SEASON_1, etc.) and disc markers (D1, D01, DISC1, etc.)
+ * @param {string} volumeLabel - The disc volume label
+ * @returns {Object} { hasSeasonMarker, hasDicsMarker, season, disc, regionCode }
+ */
+function analyzeTVShowPatterns(volumeLabel) {
+  const label = (volumeLabel || '').toUpperCase();
+
+  const result = {
+    hasSeasonMarker: false,
+    hasDiscMarker: false,
+    hasRegionCode: false,
+    season: null,
+    disc: null,
+    regionCode: null
+  };
+
+  // Season patterns: S1, S01, S001, SEASON1, SEASON_1, SEASON 1, _S1_, S1D1, etc.
+  const seasonPatterns = [
+    /[_\s]S(\d{1,2})(?:[_\s]|$|D)/,       // _S1_ or S1_ or S1D (before disc)
+    /SEASON[_\s]?(\d{1,2})/,              // SEASON1, SEASON_1, SEASON 1
+    /^S(\d{1,2})(?:[_\s]|D)/,             // S1_ at start or S1D
+    /[_\s]S(\d{1,2})$/                    // _S1 at end
+  ];
+
+  for (const pattern of seasonPatterns) {
+    const match = label.match(pattern);
+    if (match) {
+      result.hasSeasonMarker = true;
+      result.season = parseInt(match[1], 10);
+      break;
+    }
+  }
+
+  // Disc patterns: D1, D01, DISC1, DISC_1, DISC 1, _D1_, S1D1, etc.
+  const discPatterns = [
+    /[_\s]D(\d{1,2})(?:[_\s]|$)/,         // _D1_ or D1_
+    /S\d{1,2}D(\d{1,2})(?:[_\s]|$)/,      // S1D1 (disc after season, no separator)
+    /DISC[_\s]?(\d{1,2})/,                // DISC1, DISC_1, DISC 1
+    /^D(\d{1,2})[_\s]/,                   // D1_ at start
+    /[_\s]D(\d{1,2})$/                    // _D1 at end
+  ];
+
+  for (const pattern of discPatterns) {
+    const match = label.match(pattern);
+    if (match) {
+      result.hasDiscMarker = true;
+      result.disc = parseInt(match[1], 10);
+      break;
+    }
+  }
+
+  // Region codes: NA (North America), EU, UK, US, R1, R2, etc.
+  const regionPatterns = [
+    /[_\s](NA|EU|UK|US|AU|JP)(?:[_\s]|$)/,  // NA, EU, UK, US, AU, JP
+    /[_\s]R(\d)(?:[_\s]|$)/                  // R1, R2, etc.
+  ];
+
+  for (const pattern of regionPatterns) {
+    const match = label.match(pattern);
+    if (match) {
+      result.hasRegionCode = true;
+      result.regionCode = match[1];
+      break;
+    }
+  }
+
+  return result;
+}
+
+/**
  * DiscIdentifier class
  * Orchestrates disc identification workflow
  */
@@ -68,18 +139,24 @@ export class DiscIdentifier {
     const adjustments = [];
     const originalConfidence = confidence;
 
+    // 0. TV Show pattern detection in volume label
+    const tvShowPatterns = analyzeTVShowPatterns(volumeLabel);
+
     // 1. Input quality checks
     const labelLength = (volumeLabel || '').trim().length;
     const isGenericLabel = /^(disc|dvd|cd|video|movie|film|\d+)$/i.test((volumeLabel || '').trim());
 
-    if (labelLength < 5) {
+    // If we have strong TV patterns, be more lenient with short labels
+    const hasStrongTVPattern = tvShowPatterns.hasSeasonMarker && tvShowPatterns.hasDiscMarker;
+
+    if (labelLength < 5 && !hasStrongTVPattern) {
       // Very short labels provide minimal identification info
       const maxAllowed = 0.30;
       if (confidence > maxAllowed) {
         confidence = maxAllowed;
         adjustments.push(`Short label (<5 chars) caps confidence at ${maxAllowed * 100}%`);
       }
-    } else if (labelLength < 10) {
+    } else if (labelLength < 10 && !hasStrongTVPattern) {
       // Short labels are still limited
       const maxAllowed = 0.50;
       if (confidence > maxAllowed) {
@@ -108,7 +185,9 @@ export class DiscIdentifier {
     }
 
     // 3. Multiple versions flag from LLM
-    if (llmGuess.hasMultipleVersions && !llmGuess.year) {
+    // Skip penalty if TV show patterns strongly indicate this is a TV series disc
+    const skipMultipleVersionsPenalty = hasStrongTVPattern && llmGuess.type === 'tv';
+    if (llmGuess.hasMultipleVersions && !llmGuess.year && !skipMultipleVersionsPenalty) {
       // LLM knows multiple versions exist but can't determine which
       const maxAllowed = 0.45;
       if (confidence > maxAllowed) {
@@ -124,12 +203,26 @@ export class DiscIdentifier {
       const guessedTitle = normalizeTitle(llmGuess.title);
 
       // Find candidates with matching titles
-      const matchingCandidates = tmdbCandidates.filter(c => {
+      let matchingCandidates = tmdbCandidates.filter(c => {
         const candidateTitle = normalizeTitle(c.title);
         return candidateTitle === guessedTitle ||
                candidateTitle.includes(guessedTitle) ||
                guessedTitle.includes(candidateTitle);
       });
+
+      // If we have TV patterns, filter to prefer TV shows over movies/documentaries
+      if (hasStrongTVPattern && llmGuess.type === 'tv' && matchingCandidates.length > 1) {
+        const tvCandidates = matchingCandidates.filter(c => c.mediaType === 'tv');
+        if (tvCandidates.length > 0) {
+          // Filter out non-TV matches (documentaries, specials, etc.)
+          const nonTvFiltered = matchingCandidates.filter(c => c.mediaType !== 'tv');
+          if (nonTvFiltered.length > 0 && tvCandidates.length === 1) {
+            // We have exactly one TV show and some other stuff - prefer the TV show
+            adjustments.push(`TV pattern detected, filtering ${nonTvFiltered.length} non-TV matches`);
+            matchingCandidates = tvCandidates;
+          }
+        }
+      }
 
       if (matchingCandidates.length > 1) {
         // Multiple TMDB entries match the same title (remakes, versions, etc.)
@@ -139,13 +232,21 @@ export class DiscIdentifier {
           // Multiple years for same title and we don't know which one
           const yearSpread = Math.max(...years) - Math.min(...years);
 
-          if (yearSpread > 5) {
+          // For TV shows with strong patterns, be less aggressive with year spread penalty
+          if (yearSpread > 5 && !hasStrongTVPattern) {
             // Wide year spread (likely different versions/remakes)
             const penalty = Math.min(0.30, yearSpread * 0.01);
             const maxAllowed = 0.50 - penalty;
             if (confidence > maxAllowed) {
               confidence = Math.max(0.20, maxAllowed);
               adjustments.push(`${matchingCandidates.length} TMDB matches spanning ${yearSpread} years reduces confidence`);
+            }
+          } else if (yearSpread > 5 && hasStrongTVPattern) {
+            // TV pattern present - apply lighter penalty and note it
+            const maxAllowed = 0.70;
+            if (confidence > maxAllowed) {
+              confidence = maxAllowed;
+              adjustments.push(`TV pattern present; ${matchingCandidates.length} TMDB matches but likely main series`);
             }
           }
         }
@@ -167,6 +268,14 @@ export class DiscIdentifier {
         confidence = maxAllowed;
         adjustments.push(`No TMDB results found caps at ${maxAllowed * 100}%`);
       }
+    }
+
+    // 5. TV Show pattern confidence boost
+    if (hasStrongTVPattern && llmGuess.type === 'tv') {
+      // Boost confidence for TV shows with clear season/disc markers
+      const boost = 0.15;
+      confidence = Math.min(0.85, confidence + boost);
+      adjustments.push(`TV pattern (S${tvShowPatterns.season || '?'} D${tvShowPatterns.disc || '?'}) boosts confidence +${(boost * 100).toFixed(0)}%`);
     }
 
     // Build updated reasoning

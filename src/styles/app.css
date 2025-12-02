@@ -15,7 +15,7 @@
   --sap-gray-3: #d9d9d9;
   --sap-gray-4: #89919a;
   --sap-text: #32363a;
-  --sap-text-light: #6a6d70;
+  --sap-text-light: #525557; /* Improved contrast for WCAG AA */
   --sap-success: #107e3e;
   --sap-warning: #e9730c;
   --sap-error: #bb0000;
@@ -23,8 +23,8 @@
 }
 
 body {
-  font-family: '72', 'Segoe UI', Arial, sans-serif;
-  font-size: 13px;
+  font-family: 'Segoe UI', Arial, sans-serif;
+  font-size: 14px;
   background: var(--sap-gray-1);
   color: var(--sap-text);
   line-height: 1.4;
@@ -211,12 +211,13 @@ body {
 }
 
 .automation-separator {
-  color: var(--sap-gray-3);
-  margin: 0 4px;
-  font-weight: 300;
+  width: 1px;
+  height: 20px;
+  background: var(--sap-gray-3);
+  margin: 0 8px;
 }
 
-/* Danger Toggle - YOLO Mode */
+/* Danger Toggle - Fast Mode */
 .btn-danger-toggle {
   background: var(--sap-gray-2);
   border-color: var(--sap-gray-3);
@@ -571,6 +572,11 @@ body {
   gap: 16px;
 }
 
+.footer-sep {
+  margin: 0 6px;
+  opacity: 0.5;
+}
+
 /* Footer Export Progress */
 .footer-export {
   display: flex;
@@ -795,11 +801,13 @@ body {
   background: var(--sap-white);
   border-radius: 8px;
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
-  min-width: 400px;
-  max-width: 90vw;
-  max-height: 90vh;
+  min-width: 300px;
+  max-width: min(90vw, 600px);
+  max-height: calc(100vh - 40px);
+  width: 100%;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .modal-large {
@@ -977,8 +985,8 @@ body {
   border-radius: 4px;
   cursor: pointer;
   transition: all 0.15s ease;
-  flex: 1;
-  min-width: 140px;
+  flex: 1 1 140px;
+  min-width: 0;
 }
 
 .radio-label:hover {
@@ -2325,4 +2333,244 @@ body {
   font-size: 10px;
   color: #888;
   font-style: italic;
+}
+
+/* ================================================
+   LOADING SPINNER
+   ================================================ */
+
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--sap-gray-3);
+  border-top-color: var(--sap-blue);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.spinner-sm {
+  width: 12px;
+  height: 12px;
+  border-width: 1.5px;
+}
+
+.spinner-white {
+  border-color: rgba(255,255,255,0.3);
+  border-top-color: white;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ================================================
+   RESPONSIVE DESIGN - Mobile Breakpoints
+   ================================================ */
+
+/* Hamburger button - hidden on desktop */
+.hamburger-btn {
+  display: none;
+  background: transparent;
+  border: none;
+  color: white;
+  font-size: 20px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+/* Tablet and below (768px) */
+@media (max-width: 768px) {
+  .app-header {
+    padding: 8px 12px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .toolbar {
+    flex-wrap: wrap;
+    padding: 8px;
+  }
+
+  .toolbar-separator {
+    display: none;
+  }
+
+  .toolbar-info {
+    width: 100%;
+    order: 10;
+    margin-left: 0;
+    padding-top: 8px;
+    border-top: 1px solid var(--sap-gray-3);
+    text-align: center;
+  }
+
+  .automation-toggles {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-top: 8px;
+  }
+
+  .modal-large,
+  .modal-xl,
+  .modal-lg {
+    width: calc(100vw - 32px);
+    max-width: calc(100vw - 32px);
+    height: calc(100vh - 64px);
+    max-height: calc(100vh - 64px);
+  }
+
+  .radio-label {
+    flex: 1 1 100%;
+  }
+}
+
+/* Mobile (480px) */
+@media (max-width: 480px) {
+  .app-header {
+    padding: 6px 10px;
+    position: relative;
+  }
+
+  .app-header h1 {
+    font-size: 14px;
+  }
+
+  .hamburger-btn {
+    display: block;
+  }
+
+  .header-actions {
+    display: none;
+    flex-direction: column;
+    position: absolute;
+    top: 100%;
+    right: 0;
+    background: var(--sap-blue);
+    padding: 8px;
+    gap: 4px;
+    width: 150px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    z-index: 100;
+  }
+
+  .header-actions.mobile-open {
+    display: flex;
+  }
+
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .toolbar > .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .automation-toggles {
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .automation-label {
+    width: 100%;
+    text-align: center;
+    margin-bottom: 4px;
+  }
+
+  .log-panel {
+    height: 150px;
+  }
+
+  .log-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .log-tab {
+    flex-shrink: 0;
+    padding: 6px 8px;
+    font-size: 11px;
+  }
+
+  .app-footer {
+    flex-direction: column;
+    gap: 4px;
+    text-align: center;
+    padding: 8px;
+    font-size: 10px;
+  }
+
+  .footer-export {
+    max-width: 100%;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .modal {
+    min-width: unset;
+    width: calc(100vw - 24px);
+    max-width: calc(100vw - 24px);
+    margin: 12px;
+  }
+
+  .modal-large,
+  .modal-xl,
+  .modal-lg,
+  .modal-md {
+    width: calc(100vw - 24px);
+    max-width: calc(100vw - 24px);
+    height: calc(100vh - 48px);
+    max-height: calc(100vh - 48px);
+  }
+
+  .modal-body {
+    padding: 12px;
+  }
+
+  .form-row {
+    flex-direction: column;
+  }
+}
+
+/* Extra small mobile (375px and below) */
+@media (max-width: 375px) {
+  .app-header h1 {
+    font-size: 13px;
+  }
+
+  .btn {
+    padding: 5px 10px;
+    font-size: 12px;
+  }
+
+  .btn-sm {
+    padding: 4px 8px;
+    font-size: 11px;
+  }
+
+  .btn-xs {
+    padding: 2px 6px;
+    font-size: 10px;
+  }
+
+  .metadata-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .editor-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .editor-poster-section {
+    order: 2;
+  }
+
+  .editor-form-section {
+    order: 1;
+  }
 }

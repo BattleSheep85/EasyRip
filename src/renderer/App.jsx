@@ -47,6 +47,9 @@ function App() {
     ejectAfterBackup: false
   });
 
+  // Mobile menu state
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
   // Load settings and set up listeners on mount
   useEffect(() => {
     if (!window.electronAPI) {
@@ -565,20 +568,27 @@ function App() {
         <div className="header-left">
           <h1>EasyRip</h1>
         </div>
-        <div className="header-actions">
-          <button className="btn btn-sm" onClick={() => setShowMetadata(true)} title="Manage backup metadata">
+        <button
+          className="hamburger-btn"
+          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          aria-label="Toggle menu"
+        >
+          {mobileMenuOpen ? '✕' : '☰'}
+        </button>
+        <div className={`header-actions ${mobileMenuOpen ? 'mobile-open' : ''}`}>
+          <button className="btn btn-sm" onClick={() => { setShowMetadata(true); setMobileMenuOpen(false); }} title="Manage backup metadata">
             Metadata
           </button>
-          <button className="btn btn-sm" onClick={() => setShowExportManager(true)} title="Export queue and remux status">
+          <button className="btn btn-sm" onClick={() => { setShowExportManager(true); setMobileMenuOpen(false); }} title="Export queue and remux status">
             Export
           </button>
-          <button className="btn btn-sm" onClick={handleOpenBackupDir} title="Open backup folder">
+          <button className="btn btn-sm" onClick={() => { handleOpenBackupDir(); setMobileMenuOpen(false); }} title="Open backup folder">
             Backups
           </button>
-          <button className="btn btn-sm" onClick={handleViewSystemLogs} title="View system logs for troubleshooting">
+          <button className="btn btn-sm" onClick={() => { handleViewSystemLogs(); setMobileMenuOpen(false); }} title="View system logs for troubleshooting">
             Logs
           </button>
-          <button className="btn btn-sm" onClick={() => { setEditedSettings(settings); setShowSettings(true); }}>
+          <button className="btn btn-sm" onClick={() => { setEditedSettings(settings); setShowSettings(true); setMobileMenuOpen(false); }}>
             Settings
           </button>
         </div>
@@ -600,7 +610,14 @@ function App() {
             disabled={isScanning}
             className="btn btn-primary"
           >
-            {isScanning ? 'Scanning...' : 'Refresh Drives'}
+            {isScanning ? (
+              <>
+                <span className="spinner spinner-sm spinner-white"></span>
+                Scanning...
+              </>
+            ) : (
+              'Refresh Drives'
+            )}
           </button>
 
           <button
@@ -650,13 +667,13 @@ function App() {
             >
               Eject
             </button>
-            <span className="automation-separator">|</span>
+            <span className="automation-separator"></span>
             <button
               className={`btn btn-xs btn-toggle btn-danger-toggle ${automation.liveDangerously ? 'active' : ''}`}
               onClick={() => handleToggleAutomation('liveDangerously')}
-              title="Live Dangerously: Skip all confirmations and auto-approve everything"
+              title="Live Dangerously: Auto-approve ALL metadata regardless of confidence. Skips confirmations. Use at your own risk!"
             >
-              YOLO
+              Live Dangerously
             </button>
           </div>
         </div>
@@ -851,7 +868,7 @@ function App() {
             <span>Export Queue: {exportQueue.queueLength} pending</span>
           </div>
         )}
-        <span>Temp: {settings.basePath}\temp | Backup: {settings.basePath}\backup</span>
+        <span>Temp: {settings.basePath}\temp <span className="footer-sep">•</span> Backup: {settings.basePath}\backup</span>
       </footer>
 
       {/* Settings Modal */}

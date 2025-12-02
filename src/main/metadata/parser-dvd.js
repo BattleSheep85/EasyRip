@@ -49,9 +49,16 @@ export async function parseDVDStructure(backupPath) {
       regionCode: null,
       aspectRatio: null,
       videoFormat: null,
-      numberOfTitleSets: 0
+      numberOfTitleSets: 0,
+      providerId: null,
+      vmgCategory: null,
+      discTitle: null
     }
   };
+
+  // Track video attributes from all VTS files to aggregate
+  const videoFormats = new Set();
+  const aspectRatios = new Set();
 
   try {
     // Parse VIDEO_TS.IFO (main menu/disc info)
@@ -71,9 +78,26 @@ export async function parseDVDStructure(backupPath) {
 
     for (const ifoFile of vtsIfoFiles) {
       const ifoPath = path.join(videoTsPath, ifoFile);
-      const titleInfo = parseVTSIfo(ifoPath);
-      if (titleInfo) {
-        result.titles.push(...titleInfo);
+      const { titles, vtsAttr } = parseVTSIfo(ifoPath);
+      if (titles) {
+        result.titles.push(...titles);
+      }
+      // Collect video attributes from each VTS
+      if (vtsAttr?.videoFormat) videoFormats.add(vtsAttr.videoFormat);
+      if (vtsAttr?.aspectRatio) aspectRatios.add(vtsAttr.aspectRatio);
+    }
+
+    // Aggregate video attributes (use most common or first)
+    if (videoFormats.size > 0) {
+      result.dvdInfo.videoFormat = [...videoFormats][0];
+      if (videoFormats.size > 1) {
+        result.dvdInfo.videoFormatMixed = [...videoFormats];
+      }
+    }
+    if (aspectRatios.size > 0) {
+      result.dvdInfo.aspectRatio = [...aspectRatios][0];
+      if (aspectRatios.size > 1) {
+        result.dvdInfo.aspectRatioMixed = [...aspectRatios];
       }
     }
 
@@ -88,7 +112,11 @@ export async function parseDVDStructure(backupPath) {
       result.titles[0].isMainFeature = true;
     }
 
-    log.info(`Parsed ${result.titles.length} titles from DVD`);
+    log.info(`Parsed ${result.titles.length} titles from DVD`, {
+      videoFormat: result.dvdInfo.videoFormat,
+      aspectRatio: result.dvdInfo.aspectRatio,
+      providerId: result.dvdInfo.providerId
+    });
     return result;
 
   } catch (error) {
@@ -116,7 +144,10 @@ function parseVMGIfo(ifoPath) {
     const info = {
       numberOfTitleSets: 0,
       regionCode: null,
-      videoFormat: null
+      videoFormat: null,
+      providerId: null,
+      vmgCategory: null,
+      discTitle: null
     };
 
     // Number of title sets at offset 0x3E (2 bytes, big-endian)
@@ -130,7 +161,37 @@ function parseVMGIfo(ifoPath) {
       info.regionCode = parseRegionCode(regionMask);
     }
 
-    log.debug(`VMG Info: ${info.numberOfTitleSets} title sets, region ${info.regionCode}`);
+    // VMG Category at offset 0x20 (4 bytes)
+    // Indicates disc type: 0=unspecified, 1=movie, 2=special interest, etc.
+    if (buffer.length > 0x24) {
+      const category = buffer.readUInt32BE(0x20);
+      info.vmgCategory = parseVMGCategory(category);
+    }
+
+    // Provider ID at offset 0x28 (8 bytes ASCII, null-padded)
+    if (buffer.length > 0x30) {
+      const providerBytes = buffer.slice(0x28, 0x30);
+      const providerId = providerBytes.toString('ascii').replace(/\0/g, '').trim();
+      if (providerId && providerId.length > 0 && /^[\x20-\x7E]+$/.test(providerId)) {
+        info.providerId = providerId;
+      }
+    }
+
+    // Try to extract disc title from VMGM_PGCI_UT or TT_SRPT if available
+    // Title search pointer table at offset 0xC4 (4 bytes, sector number)
+    if (buffer.length > 0xC8) {
+      const ttSrptSector = buffer.readUInt32BE(0xC4);
+      if (ttSrptSector > 0) {
+        const ttSrptOffset = ttSrptSector * 2048;
+        if (ttSrptOffset + 8 < buffer.length) {
+          // TT_SRPT contains number of titles at offset 0
+          const numTitles = buffer.readUInt16BE(ttSrptOffset);
+          info.titleCount = numTitles;
+        }
+      }
+    }
+
+    log.debug(`VMG Info: ${info.numberOfTitleSets} title sets, region ${info.regionCode}, provider "${info.providerId}", category "${info.vmgCategory}"`);
     return info;
 
   } catch (error) {
@@ -140,9 +201,29 @@ function parseVMGIfo(ifoPath) {
 }
 
 /**
+ * Parse VMG category code to human-readable string
+ * @param {number} category - VMG category value
+ * @returns {string|null} Category description
+ */
+function parseVMGCategory(category) {
+  // Category is in upper 4 bits of first byte
+  const catType = (category >> 28) & 0x0F;
+
+  const categories = {
+    0: null, // Unspecified
+    1: 'movie',
+    2: 'special_interest',
+    3: 'karaoke',
+    4: 'music_video'
+  };
+
+  return categories[catType] || null;
+}
+
+/**
  * Parse VTS_XX_0.IFO (Video Title Set Information)
  * @param {string} ifoPath - Path to VTS IFO file
- * @returns {Array<Object>} Array of title entries
+ * @returns {Object} { titles: Array<Object>, vtsAttr: Object }
  */
 function parseVTSIfo(ifoPath) {
   try {
@@ -152,7 +233,7 @@ function parseVTSIfo(ifoPath) {
     const header = buffer.slice(0, 12).toString('ascii');
     if (header !== VTS_IDENTIFIER) {
       log.warn(`Invalid VTS header: ${header}`);
-      return [];
+      return { titles: [], vtsAttr: null };
     }
 
     const titles = [];
@@ -178,11 +259,11 @@ function parseVTSIfo(ifoPath) {
       }
     }
 
-    return titles;
+    return { titles, vtsAttr };
 
   } catch (error) {
     log.error(`Error parsing VTS IFO ${ifoPath}:`, error.message);
-    return [];
+    return { titles: [], vtsAttr: null };
   }
 }
 
