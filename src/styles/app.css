@@ -1901,6 +1901,132 @@ body {
   font-weight: 500;
 }
 
+.export-queue-item.parallel {
+  background: var(--sap-blue-tint);
+  border: 1px solid var(--sap-blue);
+}
+
+.export-queue-item .queue-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  background: var(--sap-blue);
+  color: white;
+  border-radius: 3px;
+}
+
+/* TV Series Batch Styles */
+.series-batch-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.series-batch-item {
+  background: var(--sap-gray-1);
+  border: 1px solid var(--sap-gray-3);
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.series-batch-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.series-batch-title {
+  font-size: 13px;
+}
+
+.series-batch-title strong {
+  color: var(--sap-text);
+}
+
+.series-batch-title .series-year {
+  color: var(--sap-text-muted);
+}
+
+.series-batch-discs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.series-disc {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.series-disc.ready {
+  background: var(--sap-success-tint);
+  border: 1px solid var(--sap-success);
+}
+
+.series-disc.waiting {
+  background: var(--sap-warning-tint);
+  border: 1px solid var(--sap-warning);
+}
+
+.series-disc .disc-icon {
+  font-weight: 700;
+  color: var(--sap-text);
+  min-width: 24px;
+}
+
+.series-disc .disc-name {
+  font-size: 10px;
+  color: var(--sap-text-muted);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.series-disc .disc-status {
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.series-disc.ready .disc-status {
+  color: var(--sap-success);
+}
+
+.series-disc.waiting .disc-status {
+  color: var(--sap-warning);
+}
+
+.series-batch-gaps {
+  font-size: 11px;
+  padding: 6px 10px;
+  background: var(--sap-error-tint);
+  border: 1px solid var(--sap-error);
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
+
+.series-batch-gaps .gap-label {
+  color: var(--sap-error);
+  font-weight: 500;
+}
+
+.series-batch-gaps .gap-list {
+  color: var(--sap-text);
+  font-weight: 600;
+}
+
+.series-batch-progress {
+  font-size: 11px;
+  color: var(--sap-text-muted);
+  padding-top: 6px;
+  border-top: 1px solid var(--sap-gray-2);
+}
+
 /* Ready to Export Grid */
 .export-ready-grid {
   display: grid;

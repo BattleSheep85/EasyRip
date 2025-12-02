@@ -7,15 +7,19 @@ const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p';
 function ExportManager({ onClose }) {
   const [queue, setQueue] = useState([]);
   const [processing, setProcessing] = useState(null);
+  const [parallelProcessing, setParallelProcessing] = useState([]);
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [exportProgress, setExportProgress] = useState(null);
+  const [seriesBatches, setSeriesBatches] = useState(null);
+  const [waitingDiscs, setWaitingDiscs] = useState([]);
 
   // Load queue status on mount
   useEffect(() => {
     loadQueueStatus();
     loadReadyBackups();
+    loadSeriesBatches();
 
     // Listen for export progress
     if (window.electronAPI) {
@@ -27,6 +31,7 @@ function ExportManager({ onClose }) {
       window.electronAPI.onExportComplete((data) => {
         setExportProgress(null);
         loadQueueStatus();
+        loadSeriesBatches();
         // Add to history
         setHistory(prev => [{
           name: data.name,
@@ -44,10 +49,20 @@ function ExportManager({ onClose }) {
           isError: true
         });
       });
+
+      window.electronAPI.onExportWaiting((data) => {
+        setWaitingDiscs(prev => {
+          if (prev.find(d => d.name === data.name)) return prev;
+          return [...prev, data];
+        });
+      });
     }
 
     // Periodic refresh
-    const interval = setInterval(loadQueueStatus, 5000);
+    const interval = setInterval(() => {
+      loadQueueStatus();
+      loadSeriesBatches();
+    }, 5000);
     return () => {
       clearInterval(interval);
       if (window.electronAPI) {
@@ -63,11 +78,39 @@ function ExportManager({ onClose }) {
       if (result.success) {
         setQueue(result.status.queue || []);
         setProcessing(result.status.processing);
+        setParallelProcessing(result.status.parallelProcessing || []);
       }
     } catch (err) {
       console.error('Failed to get export queue:', err);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadSeriesBatches() {
+    if (!window.electronAPI?.getSeriesBatchStatus) return;
+    try {
+      const result = await window.electronAPI.getSeriesBatchStatus();
+      if (result.success && result.status) {
+        setSeriesBatches(result.status);
+      }
+    } catch (err) {
+      console.error('Failed to get series batches:', err);
+    }
+  }
+
+  async function handleParallelExport(seriesKey) {
+    if (!window.electronAPI?.triggerParallelExport) return;
+    try {
+      const result = await window.electronAPI.triggerParallelExport(seriesKey);
+      if (!result.success) {
+        setError(result.error);
+      } else {
+        loadQueueStatus();
+        loadSeriesBatches();
+      }
+    } catch (err) {
+      setError(err.message);
     }
   }
 
@@ -165,11 +208,18 @@ function ExportManager({ onClose }) {
 
           {/* Export Queue */}
           <div className="export-section">
-            <h4>Export Queue ({queue.length})</h4>
-            {queue.length === 0 ? (
+            <h4>Export Queue ({queue.length}){parallelProcessing.length > 0 && ` + ${parallelProcessing.length} parallel`}</h4>
+            {queue.length === 0 && parallelProcessing.length === 0 ? (
               <div className="export-empty">No items in queue</div>
             ) : (
               <div className="export-queue-list">
+                {parallelProcessing.map((name) => (
+                  <div key={name} className="export-queue-item parallel">
+                    <span className="queue-position">||</span>
+                    <span className="queue-name">{name}</span>
+                    <span className="queue-badge">Parallel</span>
+                  </div>
+                ))}
                 {queue.map((name, idx) => (
                   <div key={name} className="export-queue-item">
                     <span className="queue-position">#{idx + 1}</span>
@@ -185,6 +235,66 @@ function ExportManager({ onClose }) {
               </div>
             )}
           </div>
+
+          {/* TV Series Batches */}
+          {seriesBatches && Object.keys(seriesBatches).length > 0 && (
+            <div className="export-section">
+              <h4>TV Series Batches</h4>
+              <div className="series-batch-list">
+                {Object.entries(seriesBatches).map(([seriesKey, data]) => (
+                  <div key={seriesKey} className="series-batch-item">
+                    <div className="series-batch-header">
+                      <div className="series-batch-title">
+                        <strong>{data.showTitle}</strong>
+                        {data.showYear && <span className="series-year"> ({data.showYear})</span>}
+                      </div>
+                      {data.processable.length > 1 && (
+                        <button
+                          className="btn btn-xs btn-primary"
+                          onClick={() => handleParallelExport(seriesKey)}
+                          disabled={parallelProcessing.length > 0}
+                        >
+                          Export {data.processable.length} Discs
+                        </button>
+                      )}
+                    </div>
+                    <div className="series-batch-discs">
+                      {data.processable.map(disc => (
+                        <div key={disc.name} className="series-disc ready">
+                          <span className="disc-icon">D{disc.discNum}</span>
+                          <span className="disc-name">{disc.name}</span>
+                          <span className="disc-status">Ready</span>
+                        </div>
+                      ))}
+                      {data.waiting.map(disc => (
+                        <div key={disc.name} className="series-disc waiting">
+                          <span className="disc-icon">D{disc.discNum}</span>
+                          <span className="disc-name">{disc.name}</span>
+                          <span className="disc-status" title={disc.reason}>
+                            Waiting for D{disc.missingDiscs?.join(', D')}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    {data.gaps.length > 0 && (
+                      <div className="series-batch-gaps">
+                        <span className="gap-label">Missing discs: </span>
+                        <span className="gap-list">
+                          {data.gaps.map(d => `D${d}`).join(', ')}
+                        </span>
+                      </div>
+                    )}
+                    {data.lastExported && (
+                      <div className="series-batch-progress">
+                        Last exported: S{data.lastExported.season} E{data.lastExported.episode}
+                        {data.lastExported.disc && ` (Disc ${data.lastExported.disc})`}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Ready to Export */}
           <div className="export-section">

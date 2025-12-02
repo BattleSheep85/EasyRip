@@ -7,11 +7,12 @@ export const SCHEMA_VERSION = 1;
 
 // Metadata status states
 export const MetadataStatus = {
-  PENDING: 'pending',     // Identified but not reviewed
-  APPROVED: 'approved',   // User confirmed identification
-  MANUAL: 'manual',       // User manually set metadata
-  ERROR: 'error',         // Identification failed
-  EXPORTED: 'exported'    // Successfully exported to library
+  PENDING: 'pending',           // Identified but not reviewed
+  APPROVED: 'approved',         // User confirmed identification
+  MANUAL: 'manual',             // User manually set metadata
+  ERROR: 'error',               // Identification failed
+  EXPORTED: 'exported',         // Successfully exported to library
+  WAITING_FOR_DISC: 'waiting_for_disc'  // TV: Waiting for previous disc(s)
 };
 
 // Disc types

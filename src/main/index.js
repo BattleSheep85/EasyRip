@@ -286,6 +286,17 @@ async function initializeMetadataSystem() {
             `${data.name}: ${data.error}`,
             'error'
           );
+        },
+        onWaiting: (data) => {
+          if (mainWindow) {
+            mainWindow.webContents.send('export-waiting', data);
+          }
+          // Show notification about waiting disc
+          showNotification(
+            'Disc Waiting',
+            `${data.name} is waiting for disc(s) ${data.missingDiscs?.join(', ') || 'unknown'} to be processed first.`,
+            'info'
+          );
         }
       });
       exportWatcher.start();
@@ -1243,6 +1254,36 @@ function setupIPC() {
     }
     exportWatcher.cancel();
     return { success: true };
+  });
+
+  // Get TV series batch status (for parallel processing UI)
+  ipcMain.handle('get-series-batch-status', async () => {
+    if (!exportWatcher) {
+      return { success: true, status: null };
+    }
+    try {
+      const status = await exportWatcher.getSeriesBatchStatus();
+      return { success: true, status };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Trigger parallel batch export for a specific series
+  ipcMain.handle('trigger-parallel-export', async (event, seriesKey) => {
+    if (!exportWatcher) {
+      return { success: false, error: 'Export watcher not initialized' };
+    }
+    try {
+      const batches = await exportWatcher.scanForTVBatches();
+      if (!batches || !batches[seriesKey]) {
+        return { success: false, error: `Series "${seriesKey}" not found` };
+      }
+      await exportWatcher.processParallelBatch(batches[seriesKey]);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
   });
 
   // ============================================

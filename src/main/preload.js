@@ -204,6 +204,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Cancel current export
   cancelExport: () => ipcRenderer.invoke('cancel-export'),
 
+  // Get TV series batch status (parallel processing)
+  getSeriesBatchStatus: () => ipcRenderer.invoke('get-series-batch-status'),
+
+  // Trigger parallel batch export for a series
+  triggerParallelExport: (seriesKey) => ipcRenderer.invoke('trigger-parallel-export', seriesKey),
+
   // Listen for export progress
   onExportProgress: (callback) => {
     ipcRenderer.on('export-progress', (event, data) => callback(data));
@@ -224,12 +230,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('export-error', (event, data) => callback(data));
   },
 
+  // Listen for disc waiting status (waiting for gap fill)
+  onExportWaiting: (callback) => {
+    ipcRenderer.on('export-waiting', (event, data) => callback(data));
+  },
+
   // Remove export listeners (cleanup)
   removeExportListeners: () => {
     ipcRenderer.removeAllListeners('export-progress');
     ipcRenderer.removeAllListeners('export-log');
     ipcRenderer.removeAllListeners('export-complete');
     ipcRenderer.removeAllListeners('export-error');
+    ipcRenderer.removeAllListeners('export-waiting');
   },
 
   // ============================================
