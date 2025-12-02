@@ -7,7 +7,30 @@
 
 import { promises as fs } from 'fs';
 import path from 'path';
+import os from 'os';
 import logger from './logger.js';
+
+// Security: Validate private key path to prevent arbitrary file reading
+function validatePrivateKeyPath(keyPath) {
+  if (!keyPath || typeof keyPath !== 'string') {
+    throw new Error('Invalid private key path');
+  }
+  const resolvedPath = path.resolve(keyPath);
+  const homeDir = os.homedir();
+  const sshDir = path.join(homeDir, '.ssh');
+
+  // Only allow private keys within user's home directory
+  if (!resolvedPath.startsWith(homeDir)) {
+    throw new Error('Private key must be in user home directory');
+  }
+
+  // Warn if not in .ssh folder (but still allow for flexibility)
+  if (!resolvedPath.startsWith(sshDir)) {
+    logger.warn('transfer', `Private key not in .ssh directory: ${resolvedPath}`);
+  }
+
+  return resolvedPath;
+}
 
 // Transfer protocol types
 export const TransferProtocol = {
@@ -162,7 +185,8 @@ export class TransferManager {
       };
 
       if (privateKey) {
-        connectOptions.privateKey = await fs.readFile(privateKey, 'utf8');
+        const validatedKeyPath = validatePrivateKeyPath(privateKey);
+        connectOptions.privateKey = await fs.readFile(validatedKeyPath, 'utf8');
       } else if (password) {
         connectOptions.password = password;
       }
@@ -319,7 +343,8 @@ export class TransferManager {
           };
 
           if (config.privateKey) {
-            connectOptions.privateKey = await fs.readFile(config.privateKey, 'utf8');
+            const validatedKeyPath = validatePrivateKeyPath(config.privateKey);
+            connectOptions.privateKey = await fs.readFile(validatedKeyPath, 'utf8');
           } else if (config.password) {
             connectOptions.password = config.password;
           }

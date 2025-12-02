@@ -807,13 +807,22 @@ export class MakeMKVAdapter {
       return { success: false, error: 'Invalid key or not on Windows' };
     }
 
-    try {
-      // Use reg.exe to add the key to the registry
-      // REG ADD "HKCU\Software\MakeMKV" /v app_Key /t REG_SZ /d "key" /f
-      const regPath = 'HKCU\\Software\\MakeMKV';
-      const cmd = `reg add "${regPath}" /v app_Key /t REG_SZ /d "${key}" /f`;
+    // Security: Validate key format to prevent command injection
+    // MakeMKV keys are T-[alphanumeric@_] format, typically 50-70 chars
+    if (!/^T-[A-Za-z0-9@_]+$/.test(key) || key.length < 40 || key.length > 100) {
+      return { success: false, error: 'Invalid key format' };
+    }
 
-      execSync(cmd, { windowsHide: true });
+    try {
+      // Use execFileSync with argument array to prevent command injection
+      const { execFileSync } = require('child_process');
+      execFileSync('reg', [
+        'add', 'HKCU\\Software\\MakeMKV',
+        '/v', 'app_Key',
+        '/t', 'REG_SZ',
+        '/d', key,
+        '/f'
+      ], { windowsHide: true });
       logger.info('makemkv', `Applied MakeMKV registration key to registry`);
       return { success: true };
     } catch (err) {

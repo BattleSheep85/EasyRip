@@ -273,14 +273,21 @@ export class DriveDetector {
 
   // Eject a disc from the specified drive
   async ejectDrive(driveLetter) {
-    const drive = driveLetter.replace(/[:\\\/]+$/, '');
+    // Security: Strict validation - only allow single letters A-Z
+    const match = driveLetter.match(/^([A-Za-z]):?\\?$/);
+    if (!match) {
+      return { success: false, error: 'Invalid drive letter format', driveLetter };
+    }
+    const drive = match[1].toUpperCase();
 
     try {
       logger.info('drives', `Ejecting drive ${drive}:`);
 
       // Use PowerShell to eject the drive via Shell.Application COM object
+      // Using execFileSync with -Command passed as argument array for safety
+      const { execFileSync } = require('child_process');
       const psCommand = `(New-Object -comObject Shell.Application).NameSpace(17).ParseName("${drive}:").InvokeVerb("Eject")`;
-      execSync(`powershell -Command "${psCommand}"`, {
+      execFileSync('powershell', ['-Command', psCommand], {
         encoding: 'utf8',
         timeout: 10000,
         windowsHide: true,

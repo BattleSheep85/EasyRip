@@ -35,6 +35,20 @@ import { getExportWatcher, resetExportWatcher } from './exportWatcher.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Security: Validate backup/disc names to prevent path traversal attacks
+function sanitizeBackupName(name) {
+  if (!name || typeof name !== 'string') {
+    throw new Error('Invalid backup name');
+  }
+  // Use path.basename to strip any directory components and prevent traversal
+  const sanitized = path.basename(name);
+  // Reject if the name contained traversal attempts or is empty after sanitization
+  if (!sanitized || sanitized !== name || name.includes('..')) {
+    throw new Error('Invalid backup name: path traversal detected');
+  }
+  return sanitized;
+}
+
 let mainWindow = null;
 let driveDetector = null;
 let sharedMakeMKV = null; // Shared instance for non-backup operations
@@ -1288,11 +1302,13 @@ function setupIPC() {
   // Delete existing backup and restart fresh (Re-Do functionality)
   ipcMain.handle('delete-and-restart-backup', async (event, driveId, makemkvIndex, discName, discSize, driveLetter) => {
     try {
-      logger.info('delete-restart', `Deleting existing backup for ${discName} to restart fresh`);
+      // Security: Validate disc name to prevent path traversal
+      const safeName = sanitizeBackupName(discName);
+      logger.info('delete-restart', `Deleting existing backup for ${safeName} to restart fresh`);
 
       const makemkv = await getSharedMakeMKV();
-      const backupPath = path.join(makemkv.basePath, 'backup', discName);
-      const tempPath = path.join(makemkv.basePath, 'temp', discName);
+      const backupPath = path.join(makemkv.basePath, 'backup', safeName);
+      const tempPath = path.join(makemkv.basePath, 'temp', safeName);
 
       // Delete existing backup folder if exists
       const backupExists = await fs.access(backupPath).then(() => true).catch(() => false);
@@ -1353,10 +1369,12 @@ function setupIPC() {
   // Delete a backup (for manual cleanup from UI)
   ipcMain.handle('delete-backup', async (event, backupName) => {
     try {
-      logger.info('delete-backup', `Deleting backup: ${backupName}`);
+      // Security: Validate backup name to prevent path traversal
+      const safeName = sanitizeBackupName(backupName);
+      logger.info('delete-backup', `Deleting backup: ${safeName}`);
 
       const makemkv = await getSharedMakeMKV();
-      const backupPath = path.join(makemkv.basePath, 'backup', backupName);
+      const backupPath = path.join(makemkv.basePath, 'backup', safeName);
 
       const exists = await fs.access(backupPath).then(() => true).catch(() => false);
       if (!exists) {

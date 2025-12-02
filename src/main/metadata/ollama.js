@@ -198,8 +198,9 @@ export class OllamaManager {
       this._emitProgress('install', 50, 'Running installer...');
 
       return new Promise((resolve, reject) => {
-        // Run silent installation
-        const installer = exec(`"${installerPath}" /SILENT /NORESTART`, {
+        // Run silent installation using execFile for security (no shell interpolation)
+        const { execFile } = require('child_process');
+        const installer = execFile(installerPath, ['/SILENT', '/NORESTART'], {
           windowsHide: true
         }, (error, stdout, stderr) => {
           this.isInstalling = false;
