@@ -1,4 +1,10 @@
 # EasyRip Application Files
+
+# Claude Code
+.claude/
+CLAUDE.md
+.playwright-mcp/
+
 # Dependencies
 node_modules/
 
