@@ -4,6 +4,8 @@
 .claude/
 CLAUDE.md
 .playwright-mcp/
+agentic-team/
+.hive-mind/
 
 # Dependencies
 node_modules/
