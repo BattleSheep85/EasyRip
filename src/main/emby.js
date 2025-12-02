@@ -55,7 +55,7 @@ export class EmbyExporter {
       const args = ['info', '-r', `file:${scanPath.path}`];
       logger.debug('emby', `Running: makemkvcon ${args.join(' ')}`);
 
-      const process = spawn(this.makemkvPath, args);
+      const process = spawn(this.makemkvPath, args, { windowsHide: true });
       const titles = new Map();
       let discName = '';
 
@@ -223,7 +223,7 @@ export class EmbyExporter {
       ];
 
       if (onLog) onLog(`Running: makemkvcon ${args.join(' ')}`);
-      this.currentProcess = spawn(this.makemkvPath, args);
+      this.currentProcess = spawn(this.makemkvPath, args, { windowsHide: true });
 
       let lastProgress = 0;
 

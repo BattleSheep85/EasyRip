@@ -412,7 +412,7 @@ export class MakeMKVAdapter {
         '--progress=-same',
         makemkvSource,
         tempPath,
-      ]);
+      ], { windowsHide: true });
 
       let lastProgress = { percent: 0, current: 0, total: 0, max: 0 };
       let smoothedPercent = 0;
@@ -751,7 +751,7 @@ export class MakeMKVAdapter {
 
       if (onLog) onLog(`Running: 7z ${args.join(' ')}`);
 
-      const process = spawn(this.sevenZipPath, args);
+      const process = spawn(this.sevenZipPath, args, { windowsHide: true });
       let output = '';
 
       process.stdout.on('data', (data) => {
