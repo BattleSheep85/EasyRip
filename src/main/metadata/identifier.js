@@ -4,7 +4,7 @@
  * Parse disc → LLM identification → TMDB lookup → Store metadata
  */
 
-import { existsSync } from 'fs';
+import { existsSync, readdirSync } from 'fs';
 import { readFile, writeFile } from 'fs/promises';
 import path from 'path';
 import logger from '../logger.js';
@@ -31,6 +31,175 @@ const log = {
 };
 
 const METADATA_FILENAME = 'metadata.json';
+
+/**
+ * Common TV show abbreviations mapping
+ * Maps common disc label abbreviations to full show names
+ */
+const TV_ABBREVIATIONS = {
+  'OTH': 'One Tree Hill',
+  'HIMYM': 'How I Met Your Mother',
+  'TBBT': 'The Big Bang Theory',
+  'OUAT': 'Once Upon a Time',
+  'IASIP': "It's Always Sunny in Philadelphia",
+  'SOA': 'Sons of Anarchy',
+  'GOT': 'Game of Thrones',
+  'TWD': 'The Walking Dead',
+  'FTWD': 'Fear the Walking Dead',
+  'AHS': 'American Horror Story',
+  'SVU': 'Law and Order SVU',
+  'NCIS': 'NCIS',
+  'CSI': 'CSI Crime Scene Investigation',
+  'DWTS': 'Dancing with the Stars',
+  'SNL': 'Saturday Night Live',
+  'PLL': 'Pretty Little Liars',
+  'GG': 'Gossip Girl',
+  'OC': 'The O.C.',
+  'SATC': 'Sex and the City',
+  'KUWTK': 'Keeping Up with the Kardashians',
+  'BB': 'Breaking Bad',
+  'BCS': 'Better Call Saul',
+  'DW': 'Doctor Who',
+  'TOS': 'Star Trek The Original Series',
+  'TNG': 'Star Trek The Next Generation',
+  'DS9': 'Star Trek Deep Space Nine',
+  'VOY': 'Star Trek Voyager',
+  'ENT': 'Star Trek Enterprise',
+  'BSG': 'Battlestar Galactica',
+  'SG1': 'Stargate SG-1',
+  'SGA': 'Stargate Atlantis',
+  'SGU': 'Stargate Universe',
+  'LOTR': 'Lord of the Rings',
+  'HP': 'Harry Potter',
+  'SW': 'Star Wars',
+  'MCU': 'Marvel',
+  'POTC': 'Pirates of the Caribbean',
+  'BTVS': 'Buffy the Vampire Slayer',
+  'AOS': 'Agents of SHIELD',
+};
+
+/**
+ * Try to expand an abbreviation to full title
+ * @param {string} label - Volume label (possibly abbreviated)
+ * @returns {string|null} Expanded title or null
+ */
+function expandAbbreviation(label) {
+  if (!label) return null;
+
+  // Clean up the label - remove disc/season markers and underscores
+  const cleaned = label
+    .toUpperCase()
+    .replace(/[_\s]*(S\d+)?[_\s]*(D\d+)?[_\s]*/g, '')
+    .replace(/[_\s]+/g, '')
+    .trim();
+
+  // Direct lookup
+  if (TV_ABBREVIATIONS[cleaned]) {
+    return TV_ABBREVIATIONS[cleaned];
+  }
+
+  // Try without trailing numbers (e.g., "OTH5" -> "OTH")
+  const withoutNumbers = cleaned.replace(/\d+$/, '');
+  if (TV_ABBREVIATIONS[withoutNumbers]) {
+    return TV_ABBREVIATIONS[withoutNumbers];
+  }
+
+  return null;
+}
+
+/**
+ * Scan sibling backups in same folder for context
+ * Useful when a disc has an abbreviated name but siblings have full names
+ * @param {string} backupPath - Path to current backup folder
+ * @returns {Object} Context from siblings { seriesName, type, season, siblingCount }
+ */
+function getSiblingContext(backupPath) {
+  const context = {
+    seriesName: null,
+    type: null,
+    season: null,
+    siblingCount: 0,
+    siblingNames: []
+  };
+
+  try {
+    const parentDir = path.dirname(backupPath);
+    const currentFolder = path.basename(backupPath);
+    const entries = readdirSync(parentDir, { withFileTypes: true });
+
+    // Look for sibling folders with metadata
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name === currentFolder) continue;
+
+      const siblingMetadataPath = path.join(parentDir, entry.name, METADATA_FILENAME);
+      if (existsSync(siblingMetadataPath)) {
+        try {
+          const content = require('fs').readFileSync(siblingMetadataPath, 'utf-8');
+          const metadata = JSON.parse(content);
+
+          // If sibling has approved/pending TV series metadata, use it
+          if (metadata.final?.title && metadata.llmGuess?.type === 'tv') {
+            context.seriesName = metadata.final.title;
+            context.type = 'tv';
+            if (metadata.tmdb?.season) {
+              context.season = metadata.tmdb.season;
+            }
+            context.siblingCount++;
+            context.siblingNames.push(entry.name);
+            log.info(`Found sibling context: "${metadata.final.title}" from ${entry.name}`);
+          }
+        } catch {
+          // Skip invalid metadata files
+        }
+      }
+
+      // Also check folder names for TV patterns (e.g., One_Tree_Hill_S1_D1)
+      const siblingPatterns = analyzeTVShowPatterns(entry.name);
+      if (siblingPatterns.hasSeasonMarker || siblingPatterns.hasDiscMarker) {
+        // Extract potential series name from folder (remove season/disc markers)
+        const cleanedName = entry.name
+          .replace(/[_\s]*(S\d+)?[_\s]*(D\d+)?[_\s]*/gi, ' ')
+          .replace(/[_\s]+/g, ' ')
+          .trim();
+
+        if (cleanedName.length > 3 && !context.seriesName) {
+          context.seriesName = cleanedName.replace(/_/g, ' ');
+          context.type = 'tv';
+          context.siblingCount++;
+          context.siblingNames.push(entry.name);
+          log.info(`Inferred series from sibling folder: "${context.seriesName}" from ${entry.name}`);
+        }
+      }
+    }
+  } catch (error) {
+    log.warn(`Failed to scan siblings: ${error.message}`);
+  }
+
+  return context;
+}
+
+/**
+ * Check if a volume label appears to be abbreviated
+ * @param {string} label - Volume label
+ * @returns {boolean}
+ */
+function isLikelyAbbreviated(label) {
+  if (!label) return false;
+
+  // Remove common prefixes/suffixes and markers
+  const cleaned = label
+    .toUpperCase()
+    .replace(/[_\s]*(S\d+)?[_\s]*(D\d+)?[_\s]*/g, '')
+    .replace(/[_\s]+/g, '')
+    .trim();
+
+  // Very short (2-5 chars) and all caps is likely abbreviated
+  if (cleaned.length >= 2 && cleaned.length <= 5 && cleaned === cleaned.toUpperCase()) {
+    return true;
+  }
+
+  return false;
+}
 
 /**
  * Analyze volume label for TV show patterns
@@ -432,6 +601,40 @@ export class DiscIdentifier {
         }
       }
 
+      // Step 0.5: Try to expand abbreviated disc names
+      // This handles cases like "OTH" which should be "One Tree Hill"
+      let siblingContext = null;
+      if (isLikelyAbbreviated(searchHint)) {
+        log.info(`Volume label "${searchHint}" appears abbreviated, attempting expansion`);
+
+        // First try the abbreviation dictionary
+        const expanded = expandAbbreviation(searchHint);
+        if (expanded) {
+          log.info(`Expanded abbreviation "${searchHint}" to "${expanded}"`);
+          searchHint = expanded;
+        } else {
+          // No dictionary match - check sibling backups for context
+          siblingContext = getSiblingContext(backupPath);
+          if (siblingContext.seriesName) {
+            log.info(`Using sibling context: "${siblingContext.seriesName}" (from ${siblingContext.siblingCount} siblings)`);
+            searchHint = siblingContext.seriesName;
+          } else {
+            log.warn(`Could not expand abbreviated label "${searchHint}" - no dictionary match or sibling context`);
+          }
+        }
+      } else if (searchHint && searchHint.length < 10) {
+        // For short labels that don't match abbreviation pattern, still check siblings
+        siblingContext = getSiblingContext(backupPath);
+        if (siblingContext.seriesName && siblingContext.type === 'tv') {
+          // Check if short label might be related to sibling series
+          const tvPatterns = analyzeTVShowPatterns(searchHint);
+          if (tvPatterns.hasSeasonMarker || tvPatterns.hasDiscMarker) {
+            log.info(`Short label "${searchHint}" with TV patterns - using sibling context: "${siblingContext.seriesName}"`);
+            searchHint = siblingContext.seriesName;
+          }
+        }
+      }
+
       // Step 1: Detect disc type
       const discType = this.detectDiscType(backupPath);
       if (discType === DiscType.UNKNOWN) {
@@ -470,6 +673,19 @@ export class DiscIdentifier {
 
       metadata.disc.mainFeatureDuration = mainDuration;
       metadata.disc.titleCount = parsed.titles?.length || 0;
+
+      // Track if abbreviation expansion was used
+      if (searchHint !== volumeLabel) {
+        metadata.disc.originalLabel = volumeLabel;
+        metadata.disc.expandedLabel = searchHint;
+        if (siblingContext?.seriesName) {
+          metadata.disc.siblingContext = {
+            seriesName: siblingContext.seriesName,
+            siblingCount: siblingContext.siblingCount,
+            siblingNames: siblingContext.siblingNames
+          };
+        }
+      }
 
       // Step 5: Try LLM identification (if Ollama available and no ARM match)
       let llmGuess = null;
