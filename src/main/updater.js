@@ -1,7 +1,8 @@
 // Auto-Updater Module
 // Handles checking for updates and installing them from GitHub releases
 
-import { autoUpdater } from 'electron-updater';
+import electronUpdater from 'electron-updater';
+const { autoUpdater } = electronUpdater;
 import { app, ipcMain } from 'electron';
 import logger from './logger.js';
 
