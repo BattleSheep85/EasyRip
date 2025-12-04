@@ -285,4 +285,33 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('library-fix-progress');
     ipcRenderer.removeAllListeners('library-fix-log');
   },
+
+  // ============================================
+  // AUTO-UPDATE APIs
+  // ============================================
+
+  // Get current app version
+  getVersion: () => ipcRenderer.invoke('get-version'),
+
+  // Check for updates
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+
+  // Download available update
+  downloadUpdate: () => ipcRenderer.invoke('download-update'),
+
+  // Install downloaded update and restart
+  installUpdate: () => ipcRenderer.invoke('install-update'),
+
+  // Get current update status
+  getUpdateStatus: () => ipcRenderer.invoke('get-update-status'),
+
+  // Listen for update status changes
+  onUpdateStatus: (callback) => {
+    ipcRenderer.on('update-status', (event, data) => callback(data));
+  },
+
+  // Remove update listeners (cleanup)
+  removeUpdateListeners: () => {
+    ipcRenderer.removeAllListeners('update-status');
+  },
 });

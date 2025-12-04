@@ -50,6 +50,10 @@ function App() {
   // Mobile menu state
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
+  // Version and update state
+  const [appVersion, setAppVersion] = useState('');
+  const [updateStatus, setUpdateStatus] = useState(null); // { status, version, percent, etc. }
+
   // Load settings and set up listeners on mount
   useEffect(() => {
     if (!window.electronAPI) {
@@ -68,6 +72,7 @@ function App() {
     if (isFirstMount) {
       loadSettings();
       loadAutomation();
+      loadVersion();
 
       // Clean up any orphan temp folders on startup, THEN scan drives
       window.electronAPI.cleanupOrphanTemps().then(result => {
@@ -82,6 +87,12 @@ function App() {
         handleScanDrives();
       });
     }
+
+    // Listen for update status changes
+    window.electronAPI.onUpdateStatus((data) => {
+      console.log('[App] Update status:', data);
+      setUpdateStatus(data);
+    });
 
     // Listen for progress updates (per-drive)
     window.electronAPI.onBackupProgress((data) => {
@@ -204,6 +215,7 @@ function App() {
       if (window.electronAPI) {
         window.electronAPI.removeBackupListeners();
         window.electronAPI.removeExportListeners();
+        window.electronAPI.removeUpdateListeners();
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -226,6 +238,43 @@ function App() {
       }
     } catch (err) {
       console.error('Failed to load settings:', err);
+    }
+  }
+
+  async function loadVersion() {
+    if (!window.electronAPI) return;
+    try {
+      const version = await window.electronAPI.getVersion();
+      setAppVersion(version);
+    } catch (err) {
+      console.error('Failed to load version:', err);
+    }
+  }
+
+  async function handleCheckForUpdates() {
+    if (!window.electronAPI) return;
+    try {
+      await window.electronAPI.checkForUpdates();
+    } catch (err) {
+      console.error('Failed to check for updates:', err);
+    }
+  }
+
+  async function handleDownloadUpdate() {
+    if (!window.electronAPI) return;
+    try {
+      await window.electronAPI.downloadUpdate();
+    } catch (err) {
+      console.error('Failed to download update:', err);
+    }
+  }
+
+  async function handleInstallUpdate() {
+    if (!window.electronAPI) return;
+    try {
+      await window.electronAPI.installUpdate();
+    } catch (err) {
+      console.error('Failed to install update:', err);
     }
   }
 
@@ -567,6 +616,7 @@ function App() {
       <header className="app-header">
         <div className="header-left">
           <h1>EasyRip</h1>
+          {appVersion && <span className="version-badge">v{appVersion}</span>}
         </div>
         <button
           className="hamburger-btn"
@@ -588,6 +638,30 @@ function App() {
           <button className="btn btn-sm" onClick={() => { handleViewSystemLogs(); setMobileMenuOpen(false); }} title="View system logs for troubleshooting">
             Logs
           </button>
+          {/* Update indicator */}
+          {updateStatus?.status === 'available' && (
+            <button
+              className="btn btn-sm btn-update"
+              onClick={() => { handleDownloadUpdate(); setMobileMenuOpen(false); }}
+              title={`Update v${updateStatus.version} available - click to download`}
+            >
+              Update
+            </button>
+          )}
+          {updateStatus?.status === 'downloading' && (
+            <span className="update-progress" title={`Downloading update: ${updateStatus.percent?.toFixed(0)}%`}>
+              Updating {updateStatus.percent?.toFixed(0)}%
+            </span>
+          )}
+          {updateStatus?.status === 'downloaded' && (
+            <button
+              className="btn btn-sm btn-update-ready"
+              onClick={() => { handleInstallUpdate(); setMobileMenuOpen(false); }}
+              title="Update downloaded - click to install and restart"
+            >
+              Restart
+            </button>
+          )}
           <button className="btn btn-sm" onClick={() => { setEditedSettings(settings); setShowSettings(true); setMobileMenuOpen(false); }}>
             Settings
           </button>

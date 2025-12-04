@@ -1,6 +1,6 @@
 {
   "name": "easyrip",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Simple GUI for MakeMKV disc backup automation",
   "main": "src/main/index.js",
   "type": "module",
@@ -40,6 +40,7 @@
     "wait-on": "^7.2.0"
   },
   "dependencies": {
+    "electron-updater": "^6.6.2",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "ssh2-sftp-client": "^12.0.1"
@@ -62,7 +63,9 @@
       {
         "from": "build/installers",
         "to": "installers",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {
@@ -82,6 +85,12 @@
       "include": "build/installer.nsh"
     },
     "asar": true,
-    "npmRebuild": false
+    "npmRebuild": false,
+    "publish": {
+      "provider": "github",
+      "owner": "BattleSheep85",
+      "repo": "EasyRip",
+      "releaseType": "release"
+    }
   }
 }

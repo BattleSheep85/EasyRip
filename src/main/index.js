@@ -32,6 +32,9 @@ import { getTransferManager } from './transfer.js';
 // Export watcher (auto-export on approval)
 import { getExportWatcher, resetExportWatcher } from './exportWatcher.js';
 
+// Auto-updater
+import { initAutoUpdater } from './updater.js';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -160,6 +163,9 @@ app.whenReady().then(async () => {
 
   createWindow();
   setupIPC();
+
+  // Initialize auto-updater (checks for updates on startup)
+  initAutoUpdater(mainWindow);
 
   // Initialize metadata system
   await initializeMetadataSystem();
