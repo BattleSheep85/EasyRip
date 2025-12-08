@@ -1,6 +1,6 @@
 {
   "name": "easyrip",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Simple GUI for MakeMKV disc backup automation",
   "main": "src/main/index.js",
   "type": "module",
