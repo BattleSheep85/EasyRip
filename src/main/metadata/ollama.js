@@ -3,7 +3,7 @@
  * Handles installation, startup, shutdown, and LLM queries
  */
 
-import { spawn, exec } from 'child_process';
+import { spawn, execFile } from 'child_process';
 import { existsSync, createWriteStream, unlinkSync } from 'fs';
 import { mkdir } from 'fs/promises';
 import path from 'path';
@@ -317,7 +317,7 @@ export class OllamaManager {
     try {
       // Ollama doesn't have a shutdown endpoint, so we use taskkill
       await new Promise((resolve, reject) => {
-        exec('taskkill /F /IM ollama.exe', { windowsHide: true }, (error) => {
+        execFile('taskkill', ['/F', '/IM', 'ollama.exe'], { windowsHide: true }, (error) => {
           // Ignore errors - process might not be running
           resolve();
         });
@@ -325,7 +325,7 @@ export class OllamaManager {
 
       // Also kill any ollama_llama_server processes
       await new Promise((resolve) => {
-        exec('taskkill /F /IM ollama_llama_server.exe', { windowsHide: true }, () => resolve());
+        execFile('taskkill', ['/F', '/IM', 'ollama_llama_server.exe'], { windowsHide: true }, () => resolve());
       });
 
     } catch (error) {

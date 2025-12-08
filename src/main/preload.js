@@ -17,6 +17,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Check if backup already exists for a disc (with size comparison)
   checkBackupStatus: (discName, discSize) => ipcRenderer.invoke('check-backup-status', discName, discSize),
 
+  // Batch check backup status for multiple discs (performance optimization)
+  batchCheckBackupStatus: (discs) => ipcRenderer.invoke('batch-check-backup-status', discs),
+
   // Start backup for a specific drive (PARALLEL - each drive runs concurrently)
   // makemkvIndex is the MakeMKV disc:N index from drive detection
   // driveLetter is needed for fingerprinting before MakeMKV runs
@@ -314,4 +317,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeUpdateListeners: () => {
     ipcRenderer.removeAllListeners('update-status');
   },
+
+  // ============================================
+  // CREDENTIAL STORE APIs
+  // ============================================
+
+  // Store a credential securely
+  credentialSet: (key, value) => ipcRenderer.invoke('credential-set', key, value),
+
+  // Check if a credential exists
+  credentialHas: (key) => ipcRenderer.invoke('credential-has', key),
+
+  // Delete a credential
+  credentialDelete: (key) => ipcRenderer.invoke('credential-delete', key),
+
+  // Check if secure storage is available
+  credentialCheckAvailable: () => ipcRenderer.invoke('credential-check-available'),
 });

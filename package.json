@@ -13,8 +13,14 @@
     "dist:dir": "npm run build && electron-builder --win --dir",
     "generate-icon": "node scripts/generate-icon.js",
     "start": "electron .",
-    "test": "node --test tests/utils.test.js",
+    "test": "node --test tests/**/*.test.js",
     "test:utils": "node --test tests/utils.test.js",
+    "test:makemkv": "node --test tests/makemkv.test.js",
+    "test:drives": "node --test tests/drives.test.js",
+    "test:logger": "node --test tests/logger.test.js",
+    "test:settings": "node --test tests/settings.test.js",
+    "test:ipc": "node --test tests/ipc-handlers.test.js",
+    "test:unit": "node --test tests/utils.test.js tests/makemkv.test.js tests/drives.test.js tests/logger.test.js tests/settings.test.js tests/ipc-handlers.test.js",
     "test:e2e": "node --test tests/gui.test.js",
     "test:gui:debug": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development electron . --remote-debugging-port=9222\""
   },
@@ -43,6 +49,7 @@
     "electron-updater": "^6.6.2",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-router-dom": "^7.10.1",
     "ssh2-sftp-client": "^12.0.1"
   },
   "build": {

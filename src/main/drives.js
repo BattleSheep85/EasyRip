@@ -2,7 +2,7 @@
 // Uses fsutil + direct filesystem access for instant, reliable detection
 // Then queries MakeMKV for disc index mapping
 
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import { readdirSync, existsSync } from 'fs';
 import logger from './logger.js';
 
@@ -91,7 +91,7 @@ export class DriveDetector {
 
     try {
       // Get all drive letters using fsutil
-      const drivesOutput = execSync('fsutil fsinfo drives', {
+      const drivesOutput = execFileSync('fsutil', ['fsinfo', 'drives'], {
         encoding: 'utf8',
         timeout: 5000,
         windowsHide: true
@@ -111,7 +111,7 @@ export class DriveDetector {
       const cdromDrives = [];
       for (const driveLetter of driveLetters) {
         try {
-          const typeOutput = execSync(`fsutil fsinfo drivetype ${driveLetter}`, {
+          const typeOutput = execFileSync('fsutil', ['fsinfo', 'drivetype', driveLetter], {
             encoding: 'utf8',
             timeout: 2000,
             windowsHide: true
@@ -135,10 +135,10 @@ export class DriveDetector {
           readdirSync(driveLetter + '/');
 
           // If we get here, the drive has readable media
-          // Get volume label using cmd /c vol
+          // Get volume label using vol command
           let volumeName = 'Unknown Disc';
           try {
-            const volOutput = execSync(`cmd /c vol ${driveLetter}`, {
+            const volOutput = execFileSync('cmd', ['/c', 'vol', driveLetter], {
               encoding: 'utf8',
               timeout: 3000,
               windowsHide: true
@@ -248,7 +248,7 @@ export class DriveDetector {
     const drive = driveLetter.replace(/[:\\\/]+$/, '');
 
     try {
-      const volInfo = execSync(`fsutil volume diskfree ${drive}:`, {
+      const volInfo = execFileSync('fsutil', ['volume', 'diskfree', `${drive}:`], {
         encoding: 'utf8',
         timeout: 5000,
         windowsHide: true

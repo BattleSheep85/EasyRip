@@ -6,20 +6,62 @@ EasyRip is an Electron application for automated disc backup using MakeMKV. It p
 
 ## Architecture
 
+### Main Process (Electron/Node.js)
+
 ```
-src/
-├── main/           # Electron main process (Node.js)
-│   ├── index.js    # App entry, IPC handlers, backup queue
-│   ├── makemkv.js  # MakeMKV CLI adapter
-│   ├── drives.js   # Windows drive detection
-│   ├── logger.js   # File logging system
-│   └── preload.js  # Secure IPC bridge
-├── renderer/       # React frontend
-│   └── App.jsx     # Main UI component
-├── shared/         # Shared utilities
-│   └── utils.js    # Common functions
-└── styles/
-    └── app.css     # Application styles
+src/main/
+├── index.js              # App lifecycle (61 lines)
+├── utils.js              # Utility functions (sanitizeBackupName, notifications)
+├── window-manager.js     # Window creation & management
+├── backup-manager.js     # Parallel backup orchestration
+├── metadata-system.js    # Ollama, TMDB, watchers initialization
+├── ipc-handlers.js       # All IPC communication handlers
+├── makemkv.js            # MakeMKV CLI adapter
+├── drives.js             # Windows drive detection
+├── logger.js             # File logging system
+├── preload.js            # Secure IPC bridge
+├── credential-store.js   # Secure credential storage (SFTP, FTP)
+├── transfer.js           # File transfer (Local, UNC, SFTP, FTP)
+├── updater.js            # Auto-update manager
+├── emby.js               # Emby library exporter
+├── exportWatcher.js      # Auto-export watcher
+├── libraryFixer.js       # Library structure fixer
+├── nfo.js                # NFO file generator
+├── tvEpisodeDetector.js  # TV episode detection
+└── metadata/             # Metadata identification system
+    ├── identifier.js         # Main identification orchestrator
+    ├── schemas.js            # Metadata schemas & validation
+    ├── ollama.js             # Ollama LLM integration
+    ├── tmdb.js               # TMDB API client
+    ├── watcher.js            # Metadata watcher (auto-identify)
+    ├── fingerprint.js        # Disc fingerprinting (DVD/Blu-ray)
+    ├── fingerprint-dvd.js    # DVD-specific fingerprinting
+    ├── fingerprint-bluray.js # Blu-ray fingerprinting
+    ├── parser-dvd.js         # DVD IFO parser
+    ├── parser-bluray.js      # Blu-ray BDMV parser
+    ├── crc64.js              # CRC64 hashing
+    └── arm-database.js       # ARM database lookup
+```
+
+### Renderer Process (React)
+
+```
+src/renderer/
+├── main.jsx        # App entry point
+├── Router.jsx      # Route configuration
+├── pages/          # Page components (HomePage, SettingsPage, etc.)
+├── components/     # Reusable components
+│   ├── common/         # Shared UI components
+│   ├── layout/         # Layout components
+│   └── settings/       # Settings page components
+└── context/        # React context providers
+```
+
+### Styles
+
+```
+src/styles/
+└── app.css         # Application styles
 ```
 
 ## Key Technical Details
@@ -27,23 +69,65 @@ src/
 ### MakeMKV Integration
 - Uses `makemkvcon64.exe` CLI tool
 - Robot mode flags: `--decrypt --cache=16 --noscan -r --progress=-same`
-- **Critical**: MakeMKV cannot run multiple instances concurrently
-- Backup queue system ensures sequential processing
+- **Parallel backups enabled**: With `--noscan`, multiple drives can backup simultaneously
+- Each backup process targets a specific `disc:N` (no scanning conflicts)
+
+### Metadata System
+- **Disc Fingerprinting**: CRC64 hashing of VIDEO_TS/BDMV for identification
+- **ARM Database**: Lookup disc fingerprints against ARM database
+- **Ollama LLM**: Local AI for disc title extraction from filenames
+- **TMDB API**: Fetch movie/TV metadata from TMDB
+- **Auto-Identification**: Watcher monitors backup folder and auto-identifies discs
+- **Export System**: Auto-export approved backups to Emby/Jellyfin library
 
 ### IPC Events
+
+**Drive Operations**
 - `scan-drives` - Detect optical drives
-- `start-backup` - Queue a backup (driveId, makemkvIndex, discName, discSize)
-- `cancel-backup` - Cancel running or queued backup
-- `backup-queued` - Notifies UI of queue position
-- `backup-started` - Backup is now running
+- `cleanup-orphan-temps` - Clean up orphan temp folders
+
+**Backup Operations**
+- `start-backup` - Start a backup (driveId, makemkvIndex, discName, discSize, driveLetter)
+- `cancel-backup` - Cancel running backup
+- `backup-started` - Backup started (includes fingerprint)
 - `backup-progress` - Progress updates
+- `backup-log` - MakeMKV log output
 - `backup-complete` - Backup finished (success or failure)
+- `get-backup-status` - Check backup status (none/complete/incomplete)
+
+**Metadata Operations**
+- `identify-disc` - Identify disc using LLM + TMDB
+- `approve-metadata` - Approve LLM guess and finalize metadata
+- `reject-metadata` - Reject LLM guess
+- `edit-metadata` - Manually edit metadata
+- `get-metadata` - Load metadata for backup
+- `metadata-pending` - Watcher found pending backup
+- `metadata-updated` - Metadata changed
+- `ollama-progress` - Ollama installation/download progress
+- `fingerprint-match` - ARM database match found
+
+**Export Operations**
+- `export-backup` - Export backup to library
+- `export-progress` - Export progress
+- `export-log` - Export log output
+- `export-complete` - Export finished
+- `export-error` - Export failed
+- `export-waiting` - Export waiting for disc dependencies
+
+**Settings Operations**
+- `get-settings` - Get current settings
+- `save-settings` - Save settings to disk
+- `get-credentials` - Get stored credentials (SFTP, FTP)
+- `save-credentials` - Save credentials securely
 
 ### File Paths
 - Settings: `~/.easyrip-settings.json`
+- Credentials: `~/.easyrip-credentials.json` (encrypted)
 - Logs: `~/.easyrip/logs/`
+- ARM Database Cache: `~/.easyrip/arm-cache.json`
 - Temp backups: `D:\EasyRip\temp\{discName}`
 - Final backups: `D:\EasyRip\backup\{discName}`
+- Metadata: `D:\EasyRip\backup\{discName}\.metadata.json`
 
 ## Build Commands
 
@@ -66,6 +150,9 @@ npm run lint     # Run linter
 - Always clean up temp folders on error/cancel
 - Parallel backups enabled (with --noscan flag)
 - Use 95% threshold for "complete" backup detection
+- **Capture fingerprints BEFORE MakeMKV runs** (extraction modifies timestamps)
+- Store fingerprint data in metadata after successful backup
+- Security: All user inputs sanitized via `sanitizeBackupName()`
 
 ## Testing
 

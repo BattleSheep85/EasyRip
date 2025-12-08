@@ -23,6 +23,10 @@ export class MakeMKVAdapter {
     this.makemkvKey = ''; // MakeMKV beta registration key
     this.transfer = null; // Transfer settings (protocol, host, paths)
     this.automation = { autoBackup: false, autoMeta: true, autoExport: false, liveDangerously: false, ejectAfterBackup: false }; // Automation toggles
+    // Settings cache for performance optimization
+    this.settingsCache = null;
+    this.settingsCacheTime = 0;
+    this.settingsCacheTTL = 5000; // 5 second cache TTL
   }
 
   // Load saved settings from disk
@@ -48,8 +52,15 @@ export class MakeMKVAdapter {
     this._settingsLoaded = true;
   }
 
-  // Get current settings (always read fresh from file for transfer settings)
+  // Get current settings with caching (5s TTL for performance)
   async getSettings() {
+    const now = Date.now();
+
+    // Return cached settings if still valid
+    if (this.settingsCache && (now - this.settingsCacheTime) < this.settingsCacheTTL) {
+      return this.settingsCache;
+    }
+
     // Re-read transfer/automation settings from file to pick up changes without restart
     try {
       const data = await fs.readFile(this.settingsPath, 'utf8');
@@ -60,7 +71,8 @@ export class MakeMKVAdapter {
       // If file read fails, keep existing cached values
     }
 
-    return {
+    // Build and cache the settings object
+    const settingsObject = {
       makemkvPath: this.makemkvPath,
       basePath: this.basePath,
       tmdbApiKey: this.tmdbApiKey,
@@ -68,6 +80,11 @@ export class MakeMKVAdapter {
       transfer: this.transfer,
       automation: this.automation,
     };
+
+    this.settingsCache = settingsObject;
+    this.settingsCacheTime = now;
+
+    return settingsObject;
   }
 
   // Save settings to disk
@@ -84,6 +101,17 @@ export class MakeMKVAdapter {
       JSON.stringify(settings, null, 2),
       'utf8'
     );
+
+    // Invalidate settings cache after save
+    this.settingsCache = {
+      makemkvPath: this.makemkvPath,
+      basePath: this.basePath,
+      tmdbApiKey: this.tmdbApiKey,
+      makemkvKey: this.makemkvKey,
+      transfer: this.transfer,
+      automation: this.automation,
+    };
+    this.settingsCacheTime = Date.now();
 
     // If MakeMKV key is provided, apply it to Windows registry
     if (this.makemkvKey) {
