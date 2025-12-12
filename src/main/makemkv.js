@@ -603,6 +603,11 @@ export class MakeMKVAdapter {
       let copyPhaseStartTime = null;
       let sizePollingInterval = null;  // For file-size based progress during copy
       let lastPolledSize = 0;
+      // Error resilience tracking
+      let errorsEncountered = [];
+      let filesSuccessful = 0;
+      let filesFailed = 0;
+      let hasRecoverableErrors = false;
 
       // Send initial 0% progress immediately so UI doesn't show "Starting..." indefinitely
       const startTime = Date.now();
@@ -750,8 +755,23 @@ export class MakeMKVAdapter {
 
             // Track errors for final summary - only actual errors
             if (isError) {
-              backupFailed = true;
-              errorMessages.push(message);
+              // Parse error details for resilience tracking
+              const errorInfo = this.parseErrorMessage(message, line);
+
+              // Determine if error is recoverable (read/hash errors vs fatal errors)
+              const isRecoverableError = this.isRecoverableError(message);
+
+              if (isRecoverableError) {
+                hasRecoverableErrors = true;
+                filesFailed++;
+                errorsEncountered.push(errorInfo);
+                logger.warn('makemkv-recovery', `Recoverable error encountered: ${errorInfo.file || 'unknown file'}`, errorInfo);
+                if (onLog) onLog(`WARNING (recoverable): ${message}`);
+              } else {
+                backupFailed = true;
+                errorMessages.push(message);
+                logger.error('makemkv-fatal', `Fatal error encountered: ${message}`);
+              }
             }
           }
         }
@@ -786,16 +806,36 @@ export class MakeMKVAdapter {
         }
 
         if (code === 0 && !backupFailed) {
-          // Rip complete, verify size
+          // Rip complete (or partial), verify size
           const tempSize = await this.getBackupSize(tempPath);
           const sizeRatio = discSize > 0 ? (tempSize / discSize) * 100 : 100;
 
-          if (onLog) {
-            onLog(`Rip complete! Size: ${this.formatSize(tempSize)} (${sizeRatio.toFixed(1)}% of disc)`);
+          // Calculate recovery statistics
+          const totalFiles = filesSuccessful + filesFailed;
+          const percentRecovered = totalFiles > 0 ? ((filesSuccessful / totalFiles) * 100) : 100;
+
+          if (hasRecoverableErrors) {
+            if (onLog) {
+              onLog(`Backup completed with ${filesFailed} file error(s)`);
+              onLog(`Recovery status: ${this.formatSize(tempSize)} (${sizeRatio.toFixed(1)}% of disc)`);
+              onLog(`Files recovered: ${filesSuccessful} of ${totalFiles} (${percentRecovered.toFixed(1)}%)`);
+            }
+            logger.warn('makemkv-recovery', `Partial backup completed`, {
+              tempSize,
+              sizeRatio,
+              filesSuccessful,
+              filesFailed,
+              percentRecovered,
+              errorCount: errorsEncountered.length
+            });
+          } else {
+            if (onLog) {
+              onLog(`Rip complete! Size: ${this.formatSize(tempSize)} (${sizeRatio.toFixed(1)}% of disc)`);
+            }
           }
 
-          if (discSize > 0 && sizeRatio < 90) {
-            // Suspiciously small - might be incomplete
+          if (discSize > 0 && sizeRatio < 90 && !hasRecoverableErrors) {
+            // Suspiciously small - might be incomplete (but no errors detected)
             if (onLog) onLog(`WARNING: Backup is only ${sizeRatio.toFixed(1)}% of disc size`);
           }
 
@@ -837,10 +877,28 @@ export class MakeMKVAdapter {
             const finalSize = await this.getBackupSize(backupPath);
 
             if (onProgress) onProgress({ percent: 100, current: lastProgress.max, max: lastProgress.max });
-            if (onLog) onLog(`Backup completed successfully!`);
+            if (hasRecoverableErrors) {
+              if (onLog) onLog(`Backup completed with recoverable errors - review metadata`);
+            } else {
+              if (onLog) onLog(`Backup completed successfully!`);
+            }
             if (onLog) onLog(`Saved to: ${backupPath}`);
             if (onLog) onLog(`Final size: ${this.formatSize(finalSize)} (${isDVD ? 'VIDEO_TS folder' : 'BDMV folder'})`);
-            resolve({ alreadyExists: false, path: backupPath, size: finalSize, isDVD });
+
+            // Include error metadata in result
+            const result = {
+              alreadyExists: false,
+              path: backupPath,
+              size: finalSize,
+              isDVD,
+              partialSuccess: hasRecoverableErrors,
+              errorsEncountered: hasRecoverableErrors ? errorsEncountered : [],
+              filesSuccessful,
+              filesFailed,
+              percentRecovered: totalFiles > 0 ? ((filesSuccessful / totalFiles) * 100) : 100
+            };
+
+            resolve(result);
           } catch (copyError) {
             if (onLog) onLog(`ERROR: Failed to process backup: ${copyError.message}`);
             reject(new Error(`Backup processing failed: ${copyError.message}`));
@@ -1115,5 +1173,98 @@ export class MakeMKVAdapter {
         resolve({ success: false, error: `Network error: ${err.message}` });
       });
     });
+  }
+
+  // Parse error message to extract file name and error details
+  parseErrorMessage(message, rawLine) {
+    const errorInfo = {
+      message: message || null,
+      file: null,
+      error: null,
+      offset: null,
+      timestamp: new Date().toISOString()
+    };
+
+    // Handle null/undefined input
+    if (!message || typeof message !== 'string') {
+      return errorInfo;
+    }
+
+    try {
+      // Extract filename patterns:
+      // "Hash check failed for file 00800.m2ts"
+      // "Error reading file 00800.m2ts"
+      // "Failed to save title 00800.m2ts"
+      const fileMatch = message.match(/(?:file|title)\s+(\d+\.m2ts|\w+\.\w+)/i);
+      if (fileMatch) {
+        errorInfo.file = fileMatch[1];
+      }
+
+      // Extract error type
+      const lowerMessage = message.toLowerCase();
+      if (lowerMessage.includes('hash check failed')) {
+        errorInfo.error = 'Hash check failed';
+      } else if (lowerMessage.includes('read error') || lowerMessage.includes('error reading')) {
+        errorInfo.error = 'Read error';
+      } else if (lowerMessage.includes('failed to save')) {
+        errorInfo.error = 'Failed to save';
+      } else {
+        errorInfo.error = 'Unknown error';
+      }
+
+      // Extract offset if present (byte position)
+      const offsetMatch = message.match(/offset[:\s]+(\d+)/i) || message.match(/at\s+(\d+)\s+bytes/i);
+      if (offsetMatch) {
+        errorInfo.offset = offsetMatch[1];
+      }
+    } catch (err) {
+      logger.warn('makemkv-parse', `Failed to parse error message: ${err.message}`, { message });
+    }
+
+    return errorInfo;
+  }
+
+  // Determine if an error is recoverable (continue backup) or fatal (stop backup)
+  isRecoverableError(message) {
+    const lowerMessage = message.toLowerCase();
+
+    // Recoverable errors - continue backup despite these
+    const recoverablePatterns = [
+      'hash check failed',
+      'read error',
+      'error reading',
+      'scsi error',
+      'operation was cancelled',
+      'bad sector'
+    ];
+
+    // Fatal errors - stop backup on these
+    const fatalPatterns = [
+      'out of memory',
+      'disk full',
+      'cannot create',
+      'permission denied',
+      'access denied',
+      'destination folder',
+      'invalid',
+      'fatal'
+    ];
+
+    // Check for fatal errors first
+    for (const pattern of fatalPatterns) {
+      if (lowerMessage.includes(pattern)) {
+        return false; // Fatal, not recoverable
+      }
+    }
+
+    // Check for recoverable errors
+    for (const pattern of recoverablePatterns) {
+      if (lowerMessage.includes(pattern)) {
+        return true; // Recoverable
+      }
+    }
+
+    // Default: treat unknown errors as fatal to be safe
+    return false;
   }
 }

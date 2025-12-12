@@ -152,8 +152,16 @@ async function runBackup(driveId, makemkv, makemkvIndex, discName, discSize, fin
     const result = await makemkv.startBackup(makemkvIndex, discName, discSize,
       // Progress callback
       (progress) => {
-        if (mainWindow) {
-          mainWindow.webContents.send('backup-progress', { driveId, ...progress });
+        const currentWindow = getMainWindow();
+        if (currentWindow && currentWindow.webContents) {
+          try {
+            currentWindow.webContents.send('backup-progress', { driveId, ...progress });
+            logger.debug('backup', `[${discName}] Sent IPC backup-progress: ${progress.percent?.toFixed(1)}%`);
+          } catch (err) {
+            logger.error('backup', `[${discName}] Failed to send IPC backup-progress: ${err.message}`);
+          }
+        } else {
+          logger.warn('backup', `[${discName}] mainWindow not available for progress update (window=${!!currentWindow}, webContents=${!!currentWindow?.webContents})`);
         }
       },
       // Log callback
@@ -193,8 +201,30 @@ async function runBackup(driveId, makemkv, makemkvIndex, discName, discSize, fin
           armMatch: fingerprint.armMatch || null
         };
 
+        // Store backup error/recovery metadata if present
+        if (result.partialSuccess) {
+          metadata.backup = {
+            partialSuccess: true,
+            errorsEncountered: result.errorsEncountered || [],
+            filesSuccessful: result.filesSuccessful || 0,
+            filesFailed: result.filesFailed || 0,
+            percentRecovered: result.percentRecovered || 0,
+            recoveryAttempted: true,
+            completedAt: new Date().toISOString()
+          };
+          logger.warn('start-backup', `Partial backup metadata stored for ${discName}`, {
+            filesFailed: result.filesFailed,
+            percentRecovered: result.percentRecovered
+          });
+        } else {
+          metadata.backup = {
+            partialSuccess: false,
+            completedAt: new Date().toISOString()
+          };
+        }
+
         await discIdentifier.saveMetadata(result.path, metadata);
-        logger.info('start-backup', `Fingerprint stored for ${discName}`);
+        logger.info('start-backup', `Fingerprint${result.partialSuccess ? ' and recovery data' : ''} stored for ${discName}`);
 
         // If we have an ARM match, add to cache for future discs
         if (fingerprint.crc64 && fingerprint.armMatch) {
@@ -234,11 +264,16 @@ async function runBackup(driveId, makemkv, makemkvIndex, discName, discSize, fin
     }
 
     // Send completion event
-    logger.info('start-backup', `Sending backup-complete IPC event`, { driveId, success: true });
+    logger.info('start-backup', `Sending backup-complete IPC event`, { driveId, success: true, partialSuccess: result.partialSuccess || false });
     if (mainWindow) {
       mainWindow.webContents.send('backup-complete', {
         driveId,
         success: true,
+        partialSuccess: result.partialSuccess || false,
+        errorsEncountered: result.errorsEncountered || [],
+        filesSuccessful: result.filesSuccessful || 0,
+        filesFailed: result.filesFailed || 0,
+        percentRecovered: result.percentRecovered || 100,
         fingerprint,
         ...result
       });

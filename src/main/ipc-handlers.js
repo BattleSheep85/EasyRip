@@ -119,6 +119,30 @@ function setupBackupHandlers() {
       const makemkv = await getSharedMakeMKV();
       const logFn = (msg) => logger.debug('backup-status', `[${discName}] ${msg}`);
       const status = await makemkv.checkBackupStatus(discName, discSize, logFn);
+
+      // Check for partial backup metadata
+      if (status.status === 'complete') {
+        const backupPath = path.join(makemkv.basePath, 'backup', discName);
+        const metadataPath = path.join(backupPath, '.metadata.json');
+        try {
+          const metadataExists = await fs.access(metadataPath).then(() => true).catch(() => false);
+          if (metadataExists) {
+            const metadataContent = await fs.readFile(metadataPath, 'utf8');
+            const metadata = JSON.parse(metadataContent);
+            if (metadata.backup?.partialSuccess) {
+              status.status = 'partial_success';
+              status.errorsEncountered = metadata.backup.errorsEncountered || [];
+              status.filesSuccessful = metadata.backup.filesSuccessful || 0;
+              status.filesFailed = metadata.backup.filesFailed || 0;
+              status.percentRecovered = metadata.backup.percentRecovered || 0;
+            }
+          }
+        } catch (err) {
+          // Ignore metadata read errors - treat as normal complete backup
+          logger.debug('backup-status', `Could not read metadata for ${discName}`, err);
+        }
+      }
+
       logger.info('backup-status', `[${discName}] Status: ${status.status}`, { ratio: status.backupRatio, size: status.backupSize });
       return { success: true, ...status };
     } catch (error) {
