@@ -8,6 +8,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 // Expose protected methods that allow the renderer process to use IPC
 // without exposing the full IPC API (security best practice)
 contextBridge.exposeInMainWorld('electronAPI', {
+  // Diagnostic: React can use this to confirm it's running
+  sendDiagnostic: (message) => ipcRenderer.invoke('react-diagnostic', message),
+
   // Fast drive detection (Windows-based)
   scanDrives: () => ipcRenderer.invoke('scan-drives'),
 
@@ -45,6 +48,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   applyMakeMKVKey: (key) => ipcRenderer.invoke('apply-makemkv-key', key),
   getMakeMKVRegistryKey: () => ipcRenderer.invoke('get-makemkv-registry-key'),
 
+  // MakeMKV Performance Configuration
+  getMakeMKVPerformance: () => ipcRenderer.invoke('get-makemkv-performance'),
+  saveMakeMKVPerformance: (performance) => ipcRenderer.invoke('save-makemkv-performance', performance),
+  getPerformancePresets: () => ipcRenderer.invoke('get-performance-presets'),
+
   // Logging and troubleshooting
   getLogs: (lines = 200) => ipcRenderer.invoke('get-logs', lines),
   getLogFiles: () => ipcRenderer.invoke('get-log-files'),
@@ -53,7 +61,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Listen for progress updates (per-drive)
   onBackupProgress: (callback) => {
-    ipcRenderer.on('backup-progress', (event, data) => callback(data));
+    console.log(`[Preload] >>> REGISTERING backup-progress listener <<<`);
+    ipcRenderer.on('backup-progress', (event, data) => {
+      console.log(`[Preload] RECEIVED backup-progress: driveId=${data.driveId}, percent=${data.percent?.toFixed(1)}%`);
+      callback(data);
+    });
+    console.log(`[Preload] >>> backup-progress listener REGISTERED <<<`);
   },
 
   // Listen for log updates (per-drive)
@@ -333,4 +346,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Check if secure storage is available
   credentialCheckAvailable: () => ipcRenderer.invoke('credential-check-available'),
+
+  // ============================================
+  // EXTERNAL LINKS
+  // ============================================
+
+  // Open URL in default OS browser
+  openExternal: (url) => ipcRenderer.invoke('open-external', url),
 });

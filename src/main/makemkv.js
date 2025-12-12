@@ -9,6 +9,55 @@ import { formatSize, isBackupComplete } from '../shared/utils.js';
 import logger from './logger.js';
 import https from 'https';
 
+// MakeMKV Performance Presets
+// These define cache sizes, buffer limits, and timeout values optimized for different disc types
+const PERFORMANCE_PRESETS = {
+  fast: {
+    name: 'Fast',
+    description: 'Minimal cache, faster startup, lower memory usage. Best for DVDs.',
+    cache: 8,        // 8MB cache
+    minbuf: 1,       // 1MB minimum buffer
+    maxbuf: 8,       // 8MB maximum buffer
+    timeout: 8000,   // 8 second timeout
+    splitSize: 0,    // No file splitting
+    retryOnError: true,
+    maxRetries: 3
+  },
+  balanced: {
+    name: 'Balanced',
+    description: 'Default settings. Good balance of speed and reliability.',
+    cache: 16,       // 16MB cache (original default was 4MB)
+    minbuf: 1,       // 1MB minimum buffer
+    maxbuf: 16,      // 16MB maximum buffer
+    timeout: 10000,  // 10 second timeout
+    splitSize: 0,    // No file splitting
+    retryOnError: true,
+    maxRetries: 3
+  },
+  compatibility: {
+    name: 'Compatibility',
+    description: 'Larger cache, more retries. Best for damaged/scratched discs.',
+    cache: 64,       // 64MB cache
+    minbuf: 2,       // 2MB minimum buffer
+    maxbuf: 32,      // 32MB maximum buffer
+    timeout: 15000,  // 15 second timeout
+    splitSize: 0,    // No file splitting
+    retryOnError: true,
+    maxRetries: 5
+  },
+  '4k-bluray': {
+    name: '4K Blu-ray',
+    description: 'Large cache for high bitrate 4K content. Best for UHD Blu-rays.',
+    cache: 128,      // 128MB cache
+    minbuf: 4,       // 4MB minimum buffer
+    maxbuf: 64,      // 64MB maximum buffer
+    timeout: 12000,  // 12 second timeout
+    splitSize: 0,    // No file splitting
+    retryOnError: true,
+    maxRetries: 3
+  }
+};
+
 export class MakeMKVAdapter {
   constructor() {
     // Default MakeMKV installation path
@@ -23,6 +72,7 @@ export class MakeMKVAdapter {
     this.makemkvKey = ''; // MakeMKV beta registration key
     this.transfer = null; // Transfer settings (protocol, host, paths)
     this.automation = { autoBackup: false, autoMeta: true, autoExport: false, liveDangerously: false, ejectAfterBackup: false }; // Automation toggles
+    this.makemkvPerformance = null; // Performance settings (presets + custom overrides)
     // Settings cache for performance optimization
     this.settingsCache = null;
     this.settingsCacheTime = 0;
@@ -41,6 +91,7 @@ export class MakeMKVAdapter {
       this.makemkvKey = settings.makemkvKey || '';
       this.transfer = settings.transfer || null;
       this.automation = settings.automation || { autoBackup: false, autoMeta: true, autoExport: false, liveDangerously: false, ejectAfterBackup: false };
+      this.makemkvPerformance = settings.makemkvPerformance || this.getDefaultPerformanceSettings();
     } catch {
       // Settings file doesn't exist yet, use defaults
       this.basePath = 'D:\\EasyRip';
@@ -48,6 +99,7 @@ export class MakeMKVAdapter {
       this.makemkvKey = '';
       this.transfer = null;
       this.automation = { autoBackup: false, autoMeta: true, autoExport: false, liveDangerously: false, ejectAfterBackup: false };
+      this.makemkvPerformance = this.getDefaultPerformanceSettings();
     }
     this._settingsLoaded = true;
   }
@@ -61,12 +113,13 @@ export class MakeMKVAdapter {
       return this.settingsCache;
     }
 
-    // Re-read transfer/automation settings from file to pick up changes without restart
+    // Re-read transfer/automation/performance settings from file to pick up changes without restart
     try {
       const data = await fs.readFile(this.settingsPath, 'utf8');
       const settings = JSON.parse(data);
       this.transfer = settings.transfer || null;
       this.automation = settings.automation || { autoBackup: false, autoMeta: true, autoExport: false, liveDangerously: false, ejectAfterBackup: false };
+      this.makemkvPerformance = settings.makemkvPerformance || this.getDefaultPerformanceSettings();
     } catch {
       // If file read fails, keep existing cached values
     }
@@ -79,6 +132,7 @@ export class MakeMKVAdapter {
       makemkvKey: this.makemkvKey,
       transfer: this.transfer,
       automation: this.automation,
+      makemkvPerformance: this.makemkvPerformance,
     };
 
     this.settingsCache = settingsObject;
@@ -95,6 +149,7 @@ export class MakeMKVAdapter {
     this.makemkvKey = settings.makemkvKey || '';
     this.transfer = settings.transfer || null;
     this.automation = settings.automation || { autoBackup: false, autoMeta: true, autoExport: false, liveDangerously: false, ejectAfterBackup: false };
+    this.makemkvPerformance = settings.makemkvPerformance || this.getDefaultPerformanceSettings();
 
     await fs.writeFile(
       this.settingsPath,
@@ -110,6 +165,7 @@ export class MakeMKVAdapter {
       makemkvKey: this.makemkvKey,
       transfer: this.transfer,
       automation: this.automation,
+      makemkvPerformance: this.makemkvPerformance,
     };
     this.settingsCacheTime = Date.now();
 
@@ -227,6 +283,104 @@ export class MakeMKVAdapter {
   formatSize(bytes) {
     const result = formatSize(bytes);
     return result === '-' ? '0 B' : result;
+  }
+
+  // Get default performance settings (balanced preset)
+  getDefaultPerformanceSettings() {
+    return {
+      preset: 'balanced',
+      customSettings: {
+        cache: 16,
+        minbuf: 1,
+        maxbuf: 16,
+        timeout: 10000,
+        splitSize: 0,
+        retryOnError: true,
+        maxRetries: 3
+      },
+      discTypeProfiles: {
+        dvd: 'balanced',
+        bluray: 'balanced',
+        '4k-bluray': '4k-bluray'
+      }
+    };
+  }
+
+  // Build MakeMKV command-line flags based on performance settings
+  // options: { preset, customSettings, discType, overrides }
+  buildMakeMKVFlags(options = {}) {
+    // Load performance settings if not provided
+    const perfSettings = this.makemkvPerformance || this.getDefaultPerformanceSettings();
+
+    // Determine which preset to use
+    let preset = perfSettings.preset || 'balanced';
+
+    // Check for disc-type specific override
+    if (options.discType && perfSettings.discTypeProfiles && perfSettings.discTypeProfiles[options.discType]) {
+      preset = perfSettings.discTypeProfiles[options.discType];
+      logger.debug('makemkv-perf', `Using disc-type profile: ${options.discType} -> ${preset}`);
+    }
+
+    // Get base settings from preset or custom
+    let settings;
+    if (preset === 'custom') {
+      settings = { ...perfSettings.customSettings };
+    } else if (PERFORMANCE_PRESETS[preset]) {
+      settings = { ...PERFORMANCE_PRESETS[preset] };
+    } else {
+      // Fallback to balanced if preset not found
+      logger.warn('makemkv-perf', `Unknown preset "${preset}", falling back to balanced`);
+      settings = { ...PERFORMANCE_PRESETS.balanced };
+    }
+
+    // Apply per-backup overrides (from options)
+    if (options.overrides) {
+      settings = { ...settings, ...options.overrides };
+    }
+
+    // Apply defaults for missing values BEFORE validation
+    if (settings.cache === undefined || settings.cache === null) settings.cache = 16;
+    if (settings.minbuf === undefined || settings.minbuf === null) settings.minbuf = 1;
+    if (settings.maxbuf === undefined || settings.maxbuf === null) settings.maxbuf = 16;
+    if (settings.timeout === undefined || settings.timeout === null) settings.timeout = 10000;
+
+    // Validate and clamp values to safe ranges
+    settings.cache = Math.max(1, Math.min(256, settings.cache));
+    settings.minbuf = Math.max(0, Math.min(settings.maxbuf, settings.minbuf));
+    settings.maxbuf = Math.max(settings.minbuf, Math.min(256, settings.maxbuf));
+    settings.timeout = Math.max(1000, Math.min(60000, settings.timeout));
+
+    // Build spawn arguments array
+    const flags = [
+      '--decrypt',
+      `--cache=${settings.cache}`,
+      '--noscan',
+      '-r',
+      '--progress=-same'
+    ];
+
+    // Add optional flags if configured
+    if (settings.minbuf !== undefined && settings.minbuf !== null && settings.minbuf > 0) {
+      flags.push(`--minlength=${settings.minbuf}`);
+    }
+    if (settings.splitSize && settings.splitSize > 0) {
+      flags.push(`--split-size=${settings.splitSize}`);
+    }
+
+    logger.info('makemkv-perf', `Performance flags built`, {
+      preset,
+      cache: settings.cache,
+      minbuf: settings.minbuf,
+      maxbuf: settings.maxbuf,
+      timeout: settings.timeout
+    });
+
+    return { flags, settings };
+  }
+
+  // Get all available performance presets
+  getPerformancePresets() {
+    return { ...PERFORMANCE_PRESETS };
   }
 
   // Check backup status for a disc, comparing against disc size
@@ -423,24 +577,22 @@ export class MakeMKVAdapter {
         onLog(`Final destination: ${backupPath}`);
       }
 
-      // Run: makemkvcon backup with proper robot mode flags
-      // Format: makemkvcon backup --decrypt --cache=4 --noscan -r --progress=-same disc:N folder
-      // --decrypt: Enable decryption (required for most discs)
-      // --cache=4: 4MB read cache (reduced from 16 to prevent memory issues with parallel backups)
-      // --noscan: Don't scan for other drives (faster startup)
-      // -r: Robot mode (parseable output)
-      // --progress=-same: Progress output to stdout
-      if (onLog) onLog(`Running: makemkvcon backup --decrypt --cache=4 --noscan -r --progress=-same ${makemkvSource} "${tempPath}"`);
-      this.currentProcess = spawn(this.makemkvPath, [
-        'backup',
-        '--decrypt',
-        '--cache=4',
-        '--noscan',
-        '-r',
-        '--progress=-same',
-        makemkvSource,
-        tempPath,
-      ], { windowsHide: true });
+      // Build MakeMKV flags based on performance settings
+      const { flags, settings: perfSettings } = this.buildMakeMKVFlags();
+
+      // Run: makemkvcon backup with performance-optimized flags
+      // Flags are dynamically built based on user settings (presets or custom)
+      const spawnArgs = ['backup', ...flags, makemkvSource, tempPath];
+      const flagsStr = flags.join(' ');
+
+      logger.info('makemkv-perf', `Starting backup with performance settings`, {
+        preset: this.makemkvPerformance?.preset || 'balanced',
+        cache: perfSettings.cache,
+        timeout: perfSettings.timeout
+      });
+
+      if (onLog) onLog(`Running: makemkvcon backup ${flagsStr} ${makemkvSource} "${tempPath}"`);
+      this.currentProcess = spawn(this.makemkvPath, spawnArgs, { windowsHide: true });
 
       let lastProgress = { percent: 0, current: 0, total: 0, max: 0 };
       let smoothedPercent = 0;
@@ -451,6 +603,34 @@ export class MakeMKVAdapter {
       let copyPhaseStartTime = null;
       let sizePollingInterval = null;  // For file-size based progress during copy
       let lastPolledSize = 0;
+
+      // Send initial 0% progress immediately so UI doesn't show "Starting..." indefinitely
+      const startTime = Date.now();
+      logger.info('makemkv-progress', `Backup process spawned, disc size: ${this.formatSize(discSize)}`);
+      if (onProgress) onProgress({ percent: 0, current: 0, total: discSize, max: discSize });
+
+      // Safety fallback: Start polling after 5 seconds if it hasn't started via PRGT message
+      // This ensures progress updates even if MakeMKV's output is different than expected
+      const pollingFallbackTimeout = setTimeout(() => {
+        if (discSize > 0 && !sizePollingInterval) {
+          logger.warn('makemkv-progress', `Polling timeout - starting fallback polling for ${discName} after 5 seconds`);
+          sizePollingInterval = setInterval(async () => {
+            try {
+              const currentSize = await this.getBackupSize(tempPath);
+              lastPolledSize = currentSize;
+              const sizePercent = Math.min((currentSize / discSize) * 95, 94);
+              smoothedPercent = Math.max(smoothedPercent, sizePercent);
+              lastProgress = { percent: smoothedPercent, current: currentSize, total: discSize, max: discSize };
+              if (onProgress) onProgress(lastProgress);
+              if (currentSize > 0 && smoothedPercent % 10 < 0.5) {
+                logger.debug('makemkv-progress', `Fallback polling: ${this.formatSize(currentSize)}/${this.formatSize(discSize)} = ${smoothedPercent.toFixed(1)}%`);
+              }
+            } catch (err) {
+              // Ignore errors
+            }
+          }, 500);
+        }
+      }, 5000);
 
       this.currentProcess.stdout.on('data', (data) => {
         const output = data.toString();
@@ -487,6 +667,7 @@ export class MakeMKVAdapter {
             const parts = this.splitRobotLine(line.substring(5));
             const title = this.unquote(parts[2] || '');
             if (onLog && title) onLog(`Task: ${title}`);
+            logger.info('makemkv-progress', `PRGT received: "${title}"`);
 
             // Detect when we enter the "Copying" phase
             // This is the REAL backup - the scan phase PRGV is meaningless
@@ -496,28 +677,30 @@ export class MakeMKVAdapter {
               smoothedPercent = 0;  // Reset progress - scan phase was fake
               lastPolledSize = 0;
               logger.info('makemkv-progress', `Entering copy phase - resetting progress. Disc size: ${discSize}`);
+            }
 
-              // Start file-size based polling since MakeMKV doesn't report copy PRGV
-              if (discSize > 0 && !sizePollingInterval) {
-                sizePollingInterval = setInterval(async () => {
-                  try {
-                    const currentSize = await this.getBackupSize(tempPath);
-                    if (currentSize > lastPolledSize) {
-                      lastPolledSize = currentSize;
-                      // Calculate progress: 0-95% for copy, 95-100% for post-processing
-                      const sizePercent = Math.min((currentSize / discSize) * 95, 94);
-                      if (sizePercent > smoothedPercent) {
-                        smoothedPercent = sizePercent;
-                        lastProgress = { percent: smoothedPercent, current: currentSize, total: discSize, max: discSize };
-                        if (onProgress) onProgress(lastProgress);
-                        logger.debug('makemkv-progress', `Size-based progress: ${this.formatSize(currentSize)}/${this.formatSize(discSize)} = ${sizePercent.toFixed(1)}%`);
-                      }
-                    }
-                  } catch (err) {
-                    // Ignore errors - folder may not exist yet
+            // Start polling if not already started (regardless of phase - acts as fallback)
+            if (discSize > 0 && !sizePollingInterval) {
+              clearTimeout(pollingFallbackTimeout);  // Cancel the timeout since we're starting polling now
+              sizePollingInterval = setInterval(async () => {
+                try {
+                  const currentSize = await this.getBackupSize(tempPath);
+                  // Always update progress to ensure UI gets updates
+                  // This prevents the "Starting..." state from getting stuck
+                  lastPolledSize = currentSize;
+                  // Calculate progress: 0-95% for copy, 95-100% for post-processing
+                  const sizePercent = Math.min((currentSize / discSize) * 95, 94);
+                  smoothedPercent = Math.max(smoothedPercent, sizePercent);
+                  lastProgress = { percent: smoothedPercent, current: currentSize, total: discSize, max: discSize };
+                  if (onProgress) {
+                    onProgress(lastProgress);
+                    logger.debug('makemkv-progress', `SENT progress to UI: ${smoothedPercent.toFixed(1)}% (${this.formatSize(currentSize)}/${this.formatSize(discSize)})`);
                   }
-                }, 2000);  // Poll every 2 seconds
-              }
+                } catch (err) {
+                  logger.warn('makemkv-progress', `Polling error: ${err.message}`);
+                }
+              }, 500);  // Poll every 500ms for more responsive updates
+              logger.info('makemkv-progress', `Started size-based polling for ${discName} via PRGT message`);
             }
           } else if (line.startsWith('PRGC:')) {
             // Progress current item - only log to file, not UI (avoids spam)
@@ -586,11 +769,12 @@ export class MakeMKVAdapter {
       this.currentProcess.on('close', async (code, signal) => {
         this.currentProcess = null;
 
-        // Clean up size polling interval
+        // Clean up size polling interval and fallback timeout
         if (sizePollingInterval) {
           clearInterval(sizePollingInterval);
           sizePollingInterval = null;
         }
+        clearTimeout(pollingFallbackTimeout);
 
         // Check if process was killed (cancelled)
         if (signal) {
@@ -678,11 +862,12 @@ export class MakeMKVAdapter {
 
       this.currentProcess.on('error', async (error) => {
         this.currentProcess = null;
-        // Clean up size polling interval
+        // Clean up size polling interval and fallback timeout
         if (sizePollingInterval) {
           clearInterval(sizePollingInterval);
           sizePollingInterval = null;
         }
+        clearTimeout(pollingFallbackTimeout);
         logger.error('makemkv', `Process error during backup of ${discName}`, error);
         this.lastError = error.message;
         // Clean up temp on error

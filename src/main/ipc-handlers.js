@@ -34,9 +34,11 @@ let currentEmbyExport = null;
  * Set up all Inter-Process Communication (IPC) handlers
  */
 export function setupIPC() {
+  setupDiagnosticHandlers();
   setupDriveHandlers();
   setupBackupHandlers();
   setupSettingsHandlers();
+  setupPerformanceHandlers();
   setupLogsHandlers();
   setupMetadataHandlers();
   setupEmbyHandlers();
@@ -44,6 +46,16 @@ export function setupIPC() {
   setupAutomationHandlers();
   setupLibraryFixerHandlers();
   setupCredentialHandlers();
+}
+
+/**
+ * Diagnostic handlers for debugging React-Main communication
+ */
+function setupDiagnosticHandlers() {
+  ipcMain.handle('react-diagnostic', (event, message) => {
+    logger.info('react-diagnostic', message);
+    return { success: true };
+  });
 }
 
 /**
@@ -321,6 +333,91 @@ function setupSettingsHandlers() {
 }
 
 /**
+ * MakeMKV Performance handlers
+ */
+function setupPerformanceHandlers() {
+  // Get current MakeMKV performance settings
+  ipcMain.handle('get-makemkv-performance', async () => {
+    try {
+      const makemkv = await getSharedMakeMKV();
+      const settings = await makemkv.getSettings();
+      const performance = settings.makemkvPerformance || makemkv.getDefaultPerformanceSettings();
+      return { success: true, performance };
+    } catch (error) {
+      logger.error('performance', 'Failed to get performance settings', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Save MakeMKV performance settings
+  ipcMain.handle('save-makemkv-performance', async (event, performance) => {
+    try {
+      const makemkv = await getSharedMakeMKV();
+      const settings = await makemkv.getSettings();
+
+      // Validate performance settings structure
+      if (!performance || typeof performance !== 'object') {
+        throw new Error('Invalid performance settings object');
+      }
+
+      // Validate preset
+      const validPresets = ['fast', 'balanced', 'compatibility', '4k-bluray', 'custom'];
+      if (performance.preset && !validPresets.includes(performance.preset)) {
+        throw new Error(`Invalid preset: ${performance.preset}`);
+      }
+
+      // Validate custom settings if provided
+      if (performance.customSettings) {
+        const cs = performance.customSettings;
+        // Validate cache (1-256 MB)
+        if (cs.cache !== undefined && (cs.cache < 1 || cs.cache > 256)) {
+          throw new Error(`Cache must be between 1 and 256 MB (got ${cs.cache})`);
+        }
+        // Validate buffers
+        if (cs.minbuf !== undefined && (cs.minbuf < 0 || cs.minbuf > 256)) {
+          throw new Error(`minbuf must be between 0 and 256 MB (got ${cs.minbuf})`);
+        }
+        if (cs.maxbuf !== undefined && (cs.maxbuf < 1 || cs.maxbuf > 256)) {
+          throw new Error(`maxbuf must be between 1 and 256 MB (got ${cs.maxbuf})`);
+        }
+        // Validate timeout (1000-60000 ms)
+        if (cs.timeout !== undefined && (cs.timeout < 1000 || cs.timeout > 60000)) {
+          throw new Error(`Timeout must be between 1000 and 60000 ms (got ${cs.timeout})`);
+        }
+      }
+
+      // Update and save
+      await makemkv.saveSettings({
+        ...settings,
+        makemkvPerformance: performance
+      });
+
+      logger.info('performance', 'Performance settings saved', {
+        preset: performance.preset,
+        cache: performance.customSettings?.cache
+      });
+
+      return { success: true };
+    } catch (error) {
+      logger.error('performance', 'Failed to save performance settings', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Get list of available performance presets
+  ipcMain.handle('get-performance-presets', async () => {
+    try {
+      const makemkv = await getSharedMakeMKV();
+      const presets = makemkv.getPerformancePresets();
+      return { success: true, presets };
+    } catch (error) {
+      logger.error('performance', 'Failed to get performance presets', error);
+      return { success: false, error: error.message };
+    }
+  });
+}
+
+/**
  * Logs handlers
  */
 function setupLogsHandlers() {
@@ -366,6 +463,25 @@ function setupLogsHandlers() {
       await shell.openPath(backupDir);
       return { success: true, path: backupDir };
     } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Open URL in default OS browser
+  ipcMain.handle('open-external', async (event, url) => {
+    console.log('[IPC] open-external called with:', url);
+    try {
+      // Security: Only allow http/https URLs
+      if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) {
+        console.log('[IPC] open-external rejected: invalid URL');
+        return { success: false, error: 'Invalid URL - only http/https allowed' };
+      }
+      console.log('[IPC] Calling shell.openExternal...');
+      await shell.openExternal(url);
+      console.log('[IPC] shell.openExternal succeeded');
+      return { success: true };
+    } catch (error) {
+      console.error('[IPC] shell.openExternal failed:', error);
       return { success: false, error: error.message };
     }
   });

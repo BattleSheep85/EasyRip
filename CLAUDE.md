@@ -129,12 +129,53 @@ src/styles/
 - Final backups: `D:\EasyRip\backup\{discName}`
 - Metadata: `D:\EasyRip\backup\{discName}\.metadata.json`
 
-## Build Commands
+## NPM Commands
 
+### Development
 ```bash
-npm run dev      # Start dev server + Electron
-npm run build    # Build for production
-npm run lint     # Run linter
+npm run electron:dev     # ⭐ MAIN COMMAND: Starts Vite + Electron app with hot reload
+npm run dev              # Starts ONLY Vite web server (no app window - for React testing)
+npm run test:gui:debug   # Start app with debugging port 9222 for interactive testing
+```
+
+### Building & Distribution
+```bash
+npm run build            # Build production bundles
+npm run dist             # Build and create Windows installer
+npm run dist:dir         # Build and create portable app
+```
+
+### Testing
+```bash
+npm run test:electron    # Run Playwright E2E tests (auto-starts app)
+npm run test:electron:headed  # Run E2E tests with visible browser
+npm run test:unit        # Run all unit tests
+npm run test:utils       # Run utility-specific tests
+```
+
+### Other
+```bash
+npm run start            # Run compiled app (requires npm run build first)
+npm run generate-icon    # Generate app icon
+```
+
+## Command Verification Process
+
+**CRITICAL**: Before suggesting ANY npm command, follow this process:
+
+1. **Read package.json** - Verify the command exists in the `scripts` section
+2. **Understand what it does** - Know the actual behavior (does it pop up the app? just build? etc.)
+3. **Verify against config files** - Check if dependent configs exist (playwright.electron.config.js, vite.config.js, etc.)
+4. **Explain clearly** - State what the command does AND when to use it
+5. **Never assume** - Don't rely on generic documentation if actual package.json differs
+
+**Example verification**:
+```
+Command: npm run electron:dev
+Verify: ✓ exists in package.json scripts
+What it does: concurrently runs vite dev server + electron pointing to localhost:5173
+When to use: Development with app window popup + hot reload
+Alternative: npm run dev (web server only)
 ```
 
 ## Code Style

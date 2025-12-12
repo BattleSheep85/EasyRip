@@ -10,6 +10,7 @@ import { useToast } from '../components/common/Toast.jsx';
 import GeneralSettings from '../components/settings/GeneralSettings.jsx';
 import PathSettings from '../components/settings/PathSettings.jsx';
 import TransferSettings from '../components/settings/TransferSettings.jsx';
+import PerformanceSettings from '../components/settings/PerformanceSettings.jsx';
 import AppearanceSettings from '../components/settings/AppearanceSettings.jsx';
 import AboutSettings from '../components/settings/AboutSettings.jsx';
 
@@ -17,6 +18,7 @@ const TABS = [
   { id: 'general', label: 'General', icon: '\u2699' },
   { id: 'paths', label: 'Paths', icon: '\uD83D\uDCC1' },
   { id: 'transfer', label: 'Transfer', icon: '\uD83D\uDCE4' },
+  { id: 'performance', label: 'Performance', icon: '\u26A1' },
   { id: 'appearance', label: 'Appearance', icon: '\uD83C\uDFA8' },
   { id: 'about', label: 'About', icon: '\u2139' },
 ];
@@ -90,6 +92,8 @@ function SettingsPage() {
         return <PathSettings />;
       case 'transfer':
         return <TransferSettings />;
+      case 'performance':
+        return <PerformanceSettings />;
       case 'appearance':
         return <AppearanceSettings />;
       case 'about':
