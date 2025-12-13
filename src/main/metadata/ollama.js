@@ -28,6 +28,40 @@ const STARTUP_TIMEOUT = 30000;
 const QUERY_TIMEOUT = 120000; // 2 minutes for LLM response
 
 /**
+ * Model selection options with VRAM requirements and capabilities
+ */
+const MODEL_SELECTIONS = {
+  phi4: {
+    name: 'phi4',
+    vram: 14,
+    reasoning: 'very-good',
+    speed: 'fast',
+    description: 'Microsoft Phi-4 - excellent reasoning, moderate VRAM'
+  },
+  deepseek: {
+    name: 'deepseek-r1:70b',
+    vram: 40,
+    reasoning: 'best',
+    speed: 'slower',
+    description: 'DeepSeek R1 70B - best reasoning, high VRAM'
+  },
+  llama31: {
+    name: 'llama3.1:70b',
+    vram: 40,
+    reasoning: 'excellent',
+    speed: 'moderate',
+    description: 'Llama 3.1 70B - excellent balance, high VRAM'
+  },
+  default: {
+    name: 'llama3.2',
+    vram: 6,
+    reasoning: 'good',
+    speed: 'fast',
+    description: 'Llama 3.2 - good baseline, low VRAM'
+  }
+};
+
+/**
  * Get expected Ollama installation paths
  */
 function getOllamaPaths() {
@@ -446,6 +480,27 @@ export class OllamaManager {
   }
 
   /**
+   * Select optimal model based on available models
+   * @returns {Promise<string>} Best available model name
+   */
+  async selectOptimalModel() {
+    // Try models in order of preference (if available)
+    const preferredOrder = ['phi4', 'llama31', 'deepseek', 'default'];
+
+    for (const key of preferredOrder) {
+      const model = MODEL_SELECTIONS[key];
+      if (await this.hasModel(model.name)) {
+        log.info(`Selected model: ${model.name} (${model.description})`);
+        return model.name;
+      }
+    }
+
+    // Fallback to current model
+    log.info(`Using current model: ${this.model}`);
+    return this.model;
+  }
+
+  /**
    * Send a query to Ollama for disc identification
    * @param {Object} extractedData - Parsed disc data
    * @returns {Promise<Object>} LLM response with structured output
@@ -455,13 +510,16 @@ export class OllamaManager {
       throw new Error('Ollama server not running');
     }
 
-    if (!await this.hasModel(this.model)) {
-      throw new Error(`Model ${this.model} not available`);
+    // Try to use best available model
+    const selectedModel = await this.selectOptimalModel();
+
+    if (!await this.hasModel(selectedModel)) {
+      throw new Error(`Model ${selectedModel} not available`);
     }
 
     const prompt = this._buildIdentificationPrompt(extractedData);
 
-    log.info('Sending identification request to Ollama...');
+    log.info(`Sending identification request to Ollama (model: ${selectedModel})...`);
     log.debug('Prompt:', prompt);
 
     try {
@@ -472,7 +530,7 @@ export class OllamaManager {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: this.model,
+          model: selectedModel,
           prompt: prompt,
           stream: false,
           format: 'json',
@@ -527,6 +585,19 @@ export class OllamaManager {
     context += `Main Feature Duration: ${mainDuration} minutes\n`;
     context += `Total Titles: ${extracted.titles?.length || 0}\n`;
 
+    // Add episode detection info if available (for TV shows)
+    if (disc.episodeDetection) {
+      context += `\n--- TV EPISODE DETECTION ---\n`;
+      context += `Detected Episodes: ${disc.episodeDetection.episodeCount}\n`;
+      if (disc.episodeDetection.seasonHint) {
+        context += `Season Hint (from label): ${disc.episodeDetection.seasonHint}\n`;
+      }
+      if (disc.episodeDetection.discNumber) {
+        context += `Disc Number (from label): ${disc.episodeDetection.discNumber}\n`;
+      }
+      context += `--- END EPISODE INFO ---\n\n`;
+    }
+
     if (mainFeature?.audioTracks?.length > 0) {
       context += `Audio Tracks: ${mainFeature.audioTracks.join(', ')}\n`;
     }
@@ -550,28 +621,34 @@ Analyze the disc label, duration, and other metadata to make your best guess. Co
 - TV show discs often have multiple episodes (30-60 minute titles)
 - The volume label often contains hints about the title
 
-CRITICAL CONFIDENCE SCORING RULES - You MUST follow these strictly:
+CONFIDENCE SCORING GUIDELINES - Focus on how certain YOU are about the identification:
 
-1. HIGH confidence (0.85-0.95): Only when the disc label clearly identifies a unique title with year or distinguishing info, OR the title is so unique it can only be one thing.
+1. HIGH confidence (0.80-0.95): You're confident this is the correct title:
+   - The disc label clearly indicates the title (even abbreviated or short labels count if recognizable)
+   - The title is distinctive/unique enough to identify
+   - Example: "INCEPTION" or "SHAWSHANK" are very identifiable even without year
 
-2. MEDIUM confidence (0.50-0.70): When you can identify the title but:
-   - Multiple versions/remakes exist (e.g., "How to Train Your Dragon" has 2010 and 2019 versions)
-   - No year is determinable from the metadata
-   - The title is a franchise with multiple entries (sequels, series)
+2. MEDIUM-HIGH confidence (0.65-0.79): Strong identification with minor uncertainty:
+   - You know the title but multiple versions/remakes might exist
+   - The franchise has sequels but the label suggests a specific entry
+   - Example: "TOTORO" is clearly "My Neighbor Totoro" (1988)
 
-3. LOW confidence (0.20-0.40): When:
-   - The disc label is very short/vague (under 10 characters)
-   - The label could match multiple unrelated titles
-   - Limited metadata makes identification speculative
-   - The title is obscure or could be a subtitle/alternate name
+3. MEDIUM confidence (0.50-0.64): Good guess but notable uncertainty:
+   - Multiple versions definitely exist and you can't determine which
+   - The label is a common word that could match multiple titles
+   - Example: "AVATAR" could be 2009 or 2022 film
 
-4. VERY LOW confidence (0.05-0.15): When:
-   - The label is generic (e.g., "DISC1", "MOVIE", "VIDEO")
-   - No meaningful identification clues exist
+4. LOW confidence (0.25-0.49): Speculative identification:
+   - Label is ambiguous or matches multiple unrelated titles
+   - Making an educated guess based on limited info
+
+5. VERY LOW confidence (0.05-0.24): Near-guesswork:
+   - Generic label (e.g., "DISC1", "MOVIE") with no identifying info
    - Pure guesswork based on duration alone
 
+NOTE: Label length alone should NOT lower confidence. "MATRIX" (6 chars) is just as identifiable as "THE_MATRIX_1999" (15 chars). Focus on how recognizable and unique the title is.
+
 If "year" cannot be determined with certainty, set it to null. Do NOT guess a year.
-If multiple versions exist and you cannot distinguish which one, your confidence MUST be 0.50 or lower.
 
 Respond with ONLY valid JSON in this exact format:
 {

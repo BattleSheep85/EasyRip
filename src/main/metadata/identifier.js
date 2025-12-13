@@ -21,6 +21,7 @@ import { parseDVDStructure, getMainFeatureDuration as getDVDDuration } from './p
 import { parseBlurayStructure, getMainFeatureDuration as getBlurayDuration } from './parser-bluray.js';
 import { getOllamaManager } from './ollama.js';
 import { getTMDBClient } from './tmdb.js';
+import { EpisodeDetector } from './episode-detector.js';
 
 // Create a simple log wrapper with category
 const log = {
@@ -280,6 +281,7 @@ export class DiscIdentifier {
   constructor() {
     this.ollama = getOllamaManager();
     this.tmdb = getTMDBClient();
+    this.episodeDetector = new EpisodeDetector(this.tmdb);
     this.isProcessing = false;
   }
 
@@ -294,6 +296,13 @@ export class DiscIdentifier {
   /**
    * Validate and adjust confidence based on TMDB results and input quality
    * This provides a reality check on the LLM's confidence score
+   *
+   * NEW APPROACH (v2): Focus on positive reinforcement from TMDB match quality
+   * rather than arbitrary caps based on label length. The key insight is:
+   * - A unique TMDB match is strong evidence, regardless of label length
+   * - Missing year only matters if multiple versions exist
+   * - Short labels that match uniquely are just as good as long labels
+   *
    * @param {Object} llmGuess - The LLM's identification guess
    * @param {Array} tmdbCandidates - TMDB search results
    * @param {string} volumeLabel - Original disc volume label
@@ -310,67 +319,27 @@ export class DiscIdentifier {
 
     // 0. TV Show pattern detection in volume label
     const tvShowPatterns = analyzeTVShowPatterns(volumeLabel);
-
-    // 1. Input quality checks
-    const labelLength = (volumeLabel || '').trim().length;
-    const isGenericLabel = /^(disc|dvd|cd|video|movie|film|\d+)$/i.test((volumeLabel || '').trim());
-
-    // If we have strong TV patterns, be more lenient with short labels
     const hasStrongTVPattern = tvShowPatterns.hasSeasonMarker && tvShowPatterns.hasDiscMarker;
 
-    if (labelLength < 5 && !hasStrongTVPattern) {
-      // Very short labels provide minimal identification info
-      const maxAllowed = 0.30;
-      if (confidence > maxAllowed) {
-        confidence = maxAllowed;
-        adjustments.push(`Short label (<5 chars) caps confidence at ${maxAllowed * 100}%`);
-      }
-    } else if (labelLength < 10 && !hasStrongTVPattern) {
-      // Short labels are still limited
-      const maxAllowed = 0.50;
-      if (confidence > maxAllowed) {
-        confidence = maxAllowed;
-        adjustments.push(`Short label (<10 chars) caps confidence at ${maxAllowed * 100}%`);
-      }
-    }
+    // 1. Generic label check (ONLY penalize truly meaningless labels)
+    const cleanedLabel = (volumeLabel || '').trim();
+    const isGenericLabel = /^(disc|dvd|cd|video|movie|film|bluray|blu-ray|bd|untitled|\d+)$/i.test(cleanedLabel) ||
+                          /^(disc|dvd|movie|film|bd)[_\s]?\d*$/i.test(cleanedLabel);
 
-    if (isGenericLabel) {
-      // Generic labels like "DISC1" or "MOVIE" provide no identification
-      const maxAllowed = 0.15;
+    if (isGenericLabel && !hasStrongTVPattern) {
+      // Generic labels like "DISC1", "MOVIE", "DVD" provide no identification
+      const maxAllowed = 0.25;
       if (confidence > maxAllowed) {
         confidence = maxAllowed;
         adjustments.push(`Generic label caps confidence at ${maxAllowed * 100}%`);
       }
     }
 
-    // 2. Missing year check
-    if (!llmGuess.year) {
-      // No year means we can't distinguish between versions/remakes
-      const maxAllowed = 0.60;
-      if (confidence > maxAllowed) {
-        confidence = maxAllowed;
-        adjustments.push(`Missing year caps confidence at ${maxAllowed * 100}%`);
-      }
-    }
+    // 2. TMDB-based confidence adjustment (the core of the new algorithm)
+    const normalizeTitle = (t) => (t || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const guessedTitle = normalizeTitle(llmGuess.title);
 
-    // 3. Multiple versions flag from LLM
-    // Skip penalty if TV show patterns strongly indicate this is a TV series disc
-    const skipMultipleVersionsPenalty = hasStrongTVPattern && llmGuess.type === 'tv';
-    if (llmGuess.hasMultipleVersions && !llmGuess.year && !skipMultipleVersionsPenalty) {
-      // LLM knows multiple versions exist but can't determine which
-      const maxAllowed = 0.45;
-      if (confidence > maxAllowed) {
-        confidence = maxAllowed;
-        adjustments.push(`Multiple versions exist without year data caps at ${maxAllowed * 100}%`);
-      }
-    }
-
-    // 4. TMDB candidate analysis
     if (tmdbCandidates && tmdbCandidates.length > 0) {
-      // Normalize the guessed title for comparison
-      const normalizeTitle = (t) => (t || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-      const guessedTitle = normalizeTitle(llmGuess.title);
-
       // Find candidates with matching titles
       let matchingCandidates = tmdbCandidates.filter(c => {
         const candidateTitle = normalizeTitle(c.title);
@@ -379,72 +348,140 @@ export class DiscIdentifier {
                guessedTitle.includes(candidateTitle);
       });
 
-      // If we have TV patterns, filter to prefer TV shows over movies/documentaries
+      // For TV patterns, filter to prefer TV shows
       if (hasStrongTVPattern && llmGuess.type === 'tv' && matchingCandidates.length > 1) {
         const tvCandidates = matchingCandidates.filter(c => c.mediaType === 'tv');
         if (tvCandidates.length > 0) {
-          // Filter out non-TV matches (documentaries, specials, etc.)
-          const nonTvFiltered = matchingCandidates.filter(c => c.mediaType !== 'tv');
-          if (nonTvFiltered.length > 0 && tvCandidates.length === 1) {
-            // We have exactly one TV show and some other stuff - prefer the TV show
-            adjustments.push(`TV pattern detected, filtering ${nonTvFiltered.length} non-TV matches`);
+          const nonTvCount = matchingCandidates.filter(c => c.mediaType !== 'tv').length;
+          if (nonTvCount > 0 && tvCandidates.length === 1) {
+            adjustments.push(`TV pattern detected, filtering ${nonTvCount} non-TV matches`);
             matchingCandidates = tvCandidates;
           }
         }
       }
 
-      if (matchingCandidates.length > 1) {
-        // Multiple TMDB entries match the same title (remakes, versions, etc.)
+      // === POSITIVE REINFORCEMENT: Boost for good TMDB matches ===
+
+      if (matchingCandidates.length === 1) {
+        // UNIQUE MATCH: Single matching candidate is strong evidence
+        const match = matchingCandidates[0];
+        const exactMatch = normalizeTitle(match.title) === guessedTitle;
+
+        if (exactMatch) {
+          // Exact unique match - this is very reliable
+          const boost = 0.20;
+          const newConfidence = Math.min(0.92, confidence + boost);
+          if (newConfidence > confidence) {
+            confidence = newConfidence;
+            adjustments.push(`Unique exact TMDB match boosts confidence +${(boost * 100).toFixed(0)}%`);
+          }
+        } else {
+          // Close match (substring) - still good but smaller boost
+          const boost = 0.10;
+          const newConfidence = Math.min(0.85, confidence + boost);
+          if (newConfidence > confidence) {
+            confidence = newConfidence;
+            adjustments.push(`Unique TMDB match boosts confidence +${(boost * 100).toFixed(0)}%`);
+          }
+        }
+      } else if (matchingCandidates.length > 1) {
+        // Multiple matches - check if they're actually different versions
         const years = [...new Set(matchingCandidates.map(c => c.year).filter(Boolean))];
 
-        if (years.length > 1 && !llmGuess.year) {
-          // Multiple years for same title and we don't know which one
+        if (years.length === 1 || years.length === 0) {
+          // All matches are from the same year (or no years) - probably the same thing
+          // This is still a good match
+          const boost = 0.10;
+          const newConfidence = Math.min(0.85, confidence + boost);
+          if (newConfidence > confidence) {
+            confidence = newConfidence;
+            adjustments.push(`${matchingCandidates.length} TMDB matches (same year) boosts confidence +${(boost * 100).toFixed(0)}%`);
+          }
+        } else if (!llmGuess.year) {
+          // Multiple years AND we don't know which one - this is the only time to penalize
           const yearSpread = Math.max(...years) - Math.min(...years);
 
-          // For TV shows with strong patterns, be less aggressive with year spread penalty
-          if (yearSpread > 5 && !hasStrongTVPattern) {
-            // Wide year spread (likely different versions/remakes)
-            const penalty = Math.min(0.30, yearSpread * 0.01);
-            const maxAllowed = 0.50 - penalty;
-            if (confidence > maxAllowed) {
-              confidence = Math.max(0.20, maxAllowed);
-              adjustments.push(`${matchingCandidates.length} TMDB matches spanning ${yearSpread} years reduces confidence`);
-            }
-          } else if (yearSpread > 5 && hasStrongTVPattern) {
-            // TV pattern present - apply lighter penalty and note it
-            const maxAllowed = 0.70;
+          if (yearSpread > 10) {
+            // Very wide spread (likely completely different productions)
+            const maxAllowed = hasStrongTVPattern ? 0.70 : 0.55;
             if (confidence > maxAllowed) {
               confidence = maxAllowed;
-              adjustments.push(`TV pattern present; ${matchingCandidates.length} TMDB matches but likely main series`);
+              adjustments.push(`${matchingCandidates.length} versions spanning ${yearSpread} years caps at ${maxAllowed * 100}%`);
             }
+          } else if (yearSpread > 3) {
+            // Moderate spread - could be remake territory
+            const maxAllowed = hasStrongTVPattern ? 0.80 : 0.65;
+            if (confidence > maxAllowed) {
+              confidence = maxAllowed;
+              adjustments.push(`${matchingCandidates.length} versions spanning ${yearSpread} years caps at ${maxAllowed * 100}%`);
+            }
+          }
+          // If year spread is <= 3, don't penalize (probably same production, different releases)
+        }
+        // If we have the year, no penalty needed - we can distinguish versions
+      }
+
+      // Check if LLM guess doesn't match any TMDB results
+      if (matchingCandidates.length === 0) {
+        // Check if the top TMDB result might still be correct (different title format)
+        const topCandidate = tmdbCandidates[0];
+        const topTitle = normalizeTitle(topCandidate?.title || '');
+
+        // Check if titles share significant words (at least 50% word overlap)
+        const guessWords = guessedTitle.match(/[a-z]{2,}/g) || [];
+        const topWords = topTitle.match(/[a-z]{2,}/g) || [];
+        const sharedWords = guessWords.filter(w => topWords.includes(w));
+        const overlapRatio = guessWords.length > 0 ? sharedWords.length / guessWords.length : 0;
+
+        if (overlapRatio >= 0.5 && sharedWords.length >= 2) {
+          // Partial match - moderate penalty
+          const maxAllowed = 0.60;
+          if (confidence > maxAllowed) {
+            confidence = maxAllowed;
+            adjustments.push(`Partial TMDB match (${sharedWords.join(', ')}) caps at ${maxAllowed * 100}%`);
+          }
+        } else {
+          // No meaningful match - stronger penalty
+          const maxAllowed = 0.40;
+          if (confidence > maxAllowed) {
+            confidence = maxAllowed;
+            adjustments.push(`No TMDB matches for guessed title caps at ${maxAllowed * 100}%`);
           }
         }
       }
-
-      // Check if no candidates match at all
-      if (matchingCandidates.length === 0 && tmdbCandidates.length > 0) {
-        // LLM guess doesn't match any TMDB results
-        const maxAllowed = 0.40;
-        if (confidence > maxAllowed) {
-          confidence = maxAllowed;
-          adjustments.push(`No TMDB matches for guessed title caps at ${maxAllowed * 100}%`);
-        }
-      }
-    } else if (!tmdbCandidates || tmdbCandidates.length === 0) {
-      // No TMDB results at all - highly uncertain
-      const maxAllowed = 0.35;
+    } else {
+      // No TMDB results at all - uncertain but don't over-penalize
+      const maxAllowed = 0.50;
       if (confidence > maxAllowed) {
         confidence = maxAllowed;
         adjustments.push(`No TMDB results found caps at ${maxAllowed * 100}%`);
       }
     }
 
-    // 5. TV Show pattern confidence boost
+    // 3. TV Show pattern confidence boost (always apply for strong TV patterns)
     if (hasStrongTVPattern && llmGuess.type === 'tv') {
-      // Boost confidence for TV shows with clear season/disc markers
-      const boost = 0.15;
-      confidence = Math.min(0.85, confidence + boost);
-      adjustments.push(`TV pattern (S${tvShowPatterns.season || '?'} D${tvShowPatterns.disc || '?'}) boosts confidence +${(boost * 100).toFixed(0)}%`);
+      const boost = 0.12;
+      const newConfidence = Math.min(0.90, confidence + boost);
+      if (newConfidence > confidence) {
+        confidence = newConfidence;
+        adjustments.push(`TV pattern (S${tvShowPatterns.season || '?'} D${tvShowPatterns.disc || '?'}) boosts +${(boost * 100).toFixed(0)}%`);
+      }
+    }
+
+    // 4. Label quality bonus for descriptive labels (NEW)
+    // If the label contains the guessed title (or vice versa), that's strong evidence
+    const normalizedLabel = normalizeTitle(cleanedLabel);
+    if (normalizedLabel.length > 3 && !isGenericLabel) {
+      const labelMatchesGuess = normalizedLabel.includes(guessedTitle) ||
+                                 guessedTitle.includes(normalizedLabel);
+      if (labelMatchesGuess && normalizedLabel.length >= guessedTitle.length * 0.5) {
+        const boost = 0.08;
+        const newConfidence = Math.min(0.95, confidence + boost);
+        if (newConfidence > confidence) {
+          confidence = newConfidence;
+          adjustments.push(`Label matches guessed title boosts +${(boost * 100).toFixed(0)}%`);
+        }
+      }
     }
 
     // Build updated reasoning
@@ -687,6 +724,34 @@ export class DiscIdentifier {
         }
       }
 
+      // Step 4.5: Detect TV episodes if disc has TV show patterns
+      let episodeDetectionResult = null;
+      const tvPatterns = analyzeTVShowPatterns(volumeLabel);
+      const isProbablyTV = tvPatterns.hasSeasonMarker || tvPatterns.hasDiscMarker || siblingContext?.type === 'tv';
+
+      if (isProbablyTV) {
+        log.info('TV show detected, running episode detection');
+        try {
+          // Run episode detection (this will fail gracefully if TMDB not available yet)
+          episodeDetectionResult = await this.episodeDetector.detectDiscEpisodes(backupPath, discType);
+
+          log.info('Episode detection result:', {
+            episodeCount: episodeDetectionResult.episodeCount,
+            error: episodeDetectionResult.error
+          });
+
+          // Store episode detection data for later correlation (after we have TMDB ID)
+          metadata.disc.episodeDetection = {
+            episodeCount: episodeDetectionResult.episodeCount,
+            titleCount: episodeDetectionResult.titles?.length || 0,
+            discNumber: tvPatterns.disc,
+            seasonHint: tvPatterns.season
+          };
+        } catch (error) {
+          log.warn(`Episode detection failed: ${error.message}`);
+        }
+      }
+
       // Step 5: Try LLM identification (if Ollama available and no ARM match)
       let llmGuess = null;
       if (skipLLM && armMatch) {
@@ -758,7 +823,47 @@ export class DiscIdentifier {
         log.warn('TMDB API key not configured');
       }
 
-      // Step 6.5: Validate and adjust confidence based on TMDB results
+      // Step 6.5: Correlate episodes to seasons (for TV shows with TMDB data)
+      if (metadata.disc.episodeDetection && metadata.tmdb?.id && metadata.tmdb?.mediaType === 'tv') {
+        log.info('Correlating episodes to seasons');
+        try {
+          const seriesInfo = await this.episodeDetector.fetchSeriesEpisodeInfo(metadata.tmdb.id);
+
+          const correlation = await this.episodeDetector.correlateDiscToEpisodes({
+            discNumber: metadata.disc.episodeDetection.discNumber,
+            extractedEpisodeCount: metadata.disc.episodeDetection.episodeCount,
+            currentSeasonHint: metadata.disc.episodeDetection.seasonHint,
+            seriesInfo
+          });
+
+          log.info('Episode correlation:', {
+            season: correlation.season,
+            episodeRange: `${correlation.startEpisode}-${correlation.endEpisode}`,
+            confidence: correlation.confidence,
+            heuristic: correlation.heuristicUsed
+          });
+
+          // Store correlation result in metadata
+          metadata.episodes = {
+            season: correlation.season,
+            startEpisode: correlation.startEpisode,
+            endEpisode: correlation.endEpisode,
+            episodeCount: correlation.episodeCount,
+            confidence: correlation.confidence,
+            correlationReason: correlation.correlationReason,
+            heuristicUsed: correlation.heuristicUsed
+          };
+
+          // Update TMDB season reference
+          if (metadata.tmdb) {
+            metadata.tmdb.season = correlation.season;
+          }
+        } catch (error) {
+          log.error(`Episode correlation failed: ${error.message}`);
+        }
+      }
+
+      // Step 6.6: Validate and adjust confidence based on TMDB results
       if (llmGuess && !skipLLM) {
         const validatedGuess = this.validateConfidence(
           llmGuess,
