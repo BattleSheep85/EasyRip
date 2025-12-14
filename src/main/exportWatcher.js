@@ -750,9 +750,10 @@ export class ExportWatcher {
         throw new Error('Library paths not configured. Please configure in Settings.');
       }
 
-      // Determine media type from metadata
+      // Determine media type from metadata (with fallback to LLM guess)
       const mediaType = job.metadata.tmdb?.mediaType ||
                        job.metadata.final?.mediaType ||
+                       job.metadata.llmGuess?.type ||
                        MediaType.MOVIE;
 
       // Get the appropriate library path
