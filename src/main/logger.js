@@ -1,7 +1,7 @@
 // Logger - Comprehensive logging system for EasyRip
 // Provides file-based logging for troubleshooting with rotation and levels
 
-import { promises as fs } from 'fs';
+import { promises as fs, createWriteStream } from 'fs';
 import path from 'path';
 import os from 'os';
 
@@ -22,6 +22,11 @@ class Logger {
     this.maxLogFiles = 10;
     this.initialized = false;
     this.pendingLogs = [];
+    this.writeStream = null;
+    this.streamBroken = false;
+    this.isRecovering = false;
+    this.writeQueue = [];
+    this.processingQueue = false;
   }
 
   // Initialize the logger (create directories, set up log file)
@@ -38,6 +43,9 @@ class Logger {
 
       // Rotate old logs
       await this.rotateLogsIfNeeded();
+
+      // Initialize write stream
+      await this.initializeWriteStream();
 
       // Write startup header
       await this.writeToFile('\n' + '='.repeat(80) + '\n');
@@ -57,6 +65,91 @@ class Logger {
     } catch (err) {
       console.error('Failed to initialize logger:', err);
     }
+  }
+
+  // Initialize or reinitialize the write stream
+  async initializeWriteStream() {
+    // Clean up existing stream
+    if (this.writeStream) {
+      try {
+        this.writeStream.removeAllListeners();
+        this.writeStream.end();
+      } catch {
+        // Ignore cleanup errors
+      }
+      this.writeStream = null;
+    }
+
+    return new Promise((resolve, reject) => {
+      try {
+        this.writeStream = createWriteStream(this.currentLogFile, {
+          flags: 'a',
+          encoding: 'utf8',
+          highWaterMark: 16384 // 16KB buffer
+        });
+
+        this.streamBroken = false;
+
+        // Handle stream errors (EPIPE, ENOSPC, etc.)
+        this.writeStream.on('error', (err) => {
+          // Don't crash the app - just mark stream as broken
+          console.error('[Logger] Write stream error (non-fatal):', err.code || err.message);
+          this.streamBroken = true;
+
+          // Attempt recovery after a delay
+          if (!this.isRecovering) {
+            this.scheduleStreamRecovery();
+          }
+        });
+
+        // Handle stream close
+        this.writeStream.on('close', () => {
+          if (!this.streamBroken) {
+            this.streamBroken = true;
+          }
+        });
+
+        // Wait for stream to be ready
+        this.writeStream.once('ready', () => {
+          resolve();
+        });
+
+        this.writeStream.once('error', (err) => {
+          reject(err);
+        });
+
+      } catch (err) {
+        reject(err);
+      }
+    }).catch((err) => {
+      console.error('[Logger] Failed to initialize write stream:', err);
+      this.streamBroken = true;
+      this.scheduleStreamRecovery();
+    });
+  }
+
+  // Schedule automatic recovery from broken stream
+  scheduleStreamRecovery() {
+    if (this.isRecovering) return;
+
+    this.isRecovering = true;
+
+    // Wait 5 seconds before attempting recovery
+    setTimeout(async () => {
+      try {
+        console.log('[Logger] Attempting to recover write stream...');
+        await this.initializeWriteStream();
+        console.log('[Logger] Write stream recovered successfully');
+
+        // Process queued logs
+        this.processWriteQueue();
+      } catch (err) {
+        console.error('[Logger] Stream recovery failed:', err);
+        // Will try again on next write attempt
+      } finally {
+        this.isRecovering = false;
+      }
+    }, 5000);
   }
 
   // Format a log message
@@ -85,17 +178,96 @@ class Logger {
     return formatted + '\n';
   }
 
-  // Write to log file
+  // Process queued writes
+  async processWriteQueue() {
+    if (this.processingQueue || this.writeQueue.length === 0) return;
+    if (this.streamBroken || !this.writeStream || this.writeStream.destroyed) return;
+
+    this.processingQueue = true;
+
+    while (this.writeQueue.length > 0 && !this.streamBroken) {
+      const message = this.writeQueue.shift();
+      try {
+        await this.writeToStreamSafe(message);
+      } catch {
+        // Re-queue failed message
+        this.writeQueue.unshift(message);
+        break;
+      }
+    }
+
+    this.processingQueue = false;
+  }
+
+  // Safe write to stream with error handling
+  async writeToStreamSafe(message) {
+    return new Promise((resolve, reject) => {
+      if (!this.writeStream || this.streamBroken || this.writeStream.destroyed) {
+        reject(new Error('Stream not available'));
+        return;
+      }
+
+      try {
+        const canWrite = this.writeStream.write(message, 'utf8', (err) => {
+          if (err) {
+            // Don't crash - just mark as broken and reject
+            console.error('[Logger] Write error (non-fatal):', err.code || err.message);
+            this.streamBroken = true;
+            reject(err);
+          } else {
+            resolve();
+          }
+        });
+
+        // If buffer is full, wait for drain
+        if (!canWrite) {
+          this.writeStream.once('drain', () => {
+            resolve();
+          });
+        }
+      } catch (err) {
+        // Synchronous errors (stream closed, etc.)
+        console.error('[Logger] Write exception (non-fatal):', err.code || err.message);
+        this.streamBroken = true;
+        reject(err);
+      }
+    });
+  }
+
+  // Write to log file with graceful degradation
   async writeToFile(message) {
     if (!this.currentLogFile) {
       this.pendingLogs.push(message);
       return;
     }
 
+    // If stream is broken, queue the message and attempt recovery
+    if (this.streamBroken || !this.writeStream || this.writeStream.destroyed) {
+      // Queue message (limit queue size to prevent memory bloat)
+      if (this.writeQueue.length < 1000) {
+        this.writeQueue.push(message);
+      }
+
+      // Trigger recovery if not already recovering
+      if (!this.isRecovering) {
+        this.scheduleStreamRecovery();
+      }
+
+      return;
+    }
+
     try {
-      await fs.appendFile(this.currentLogFile, message, 'utf8');
+      await this.writeToStreamSafe(message);
     } catch (err) {
-      console.error('Failed to write to log file:', err);
+      // Stream failed - queue message for retry
+      if (this.writeQueue.length < 1000) {
+        this.writeQueue.push(message);
+      }
+
+      // Trigger recovery
+      if (!this.isRecovering) {
+        this.scheduleStreamRecovery();
+      }
     }
   }
 
@@ -131,24 +303,34 @@ class Logger {
     }
   }
 
-  // Core log method
+  // Core log method with error isolation
   async log(level, category, message, data = null) {
     if (level > this.logLevel) return;
 
-    const formatted = this.formatMessage(level, category, message, data);
+    try {
+      const formatted = this.formatMessage(level, category, message, data);
 
-    // Always log to console
-    const levelName = Object.keys(LOG_LEVELS).find(k => LOG_LEVELS[k] === level);
-    if (level === LOG_LEVELS.ERROR) {
-      console.error(`[${category}] ${message}`, data || '');
-    } else if (level === LOG_LEVELS.WARN) {
-      console.warn(`[${category}] ${message}`, data || '');
-    } else {
-      console.log(`[${category}] ${message}`, data || '');
+      // Always log to console (even if file write fails)
+      const levelName = Object.keys(LOG_LEVELS).find(k => LOG_LEVELS[k] === level);
+      if (level === LOG_LEVELS.ERROR) {
+        console.error(`[${category}] ${message}`, data || '');
+      } else if (level === LOG_LEVELS.WARN) {
+        console.warn(`[${category}] ${message}`, data || '');
+      } else {
+        console.log(`[${category}] ${message}`, data || '');
+      }
+
+      // Write to file (non-blocking, won't throw)
+      // Use setImmediate to prevent blocking caller
+      setImmediate(() => {
+        this.writeToFile(formatted).catch(() => {
+          // Silently fail - error already handled in writeToFile
+        });
+      });
+    } catch (err) {
+      // Prevent logging errors from crashing the app
+      console.error('[Logger] Log method error (non-fatal):', err.message);
     }
-
-    // Write to file
-    await this.writeToFile(formatted);
   }
 
   // Convenience methods
@@ -226,10 +408,52 @@ class Logger {
   getLogDir() {
     return this.logDir;
   }
+
+  // Cleanup method for graceful shutdown
+  async cleanup() {
+    try {
+      // Process remaining queued logs
+      if (this.writeQueue.length > 0) {
+        console.log(`[Logger] Flushing ${this.writeQueue.length} queued logs...`);
+        await this.processWriteQueue();
+      }
+
+      // Close the write stream
+      if (this.writeStream && !this.writeStream.destroyed) {
+        return new Promise((resolve) => {
+          this.writeStream.end(() => {
+            console.log('[Logger] Write stream closed gracefully');
+            resolve();
+          });
+
+          // Force close after 5 seconds
+          setTimeout(() => {
+            if (!this.writeStream.destroyed) {
+              this.writeStream.destroy();
+            }
+            resolve();
+          }, 5000);
+        });
+      }
+    } catch (err) {
+      console.error('[Logger] Cleanup error (non-fatal):', err.message);
+    }
+  }
 }
 
 // Singleton instance
 const logger = new Logger();
+
+// Register cleanup on process exit
+process.on('exit', () => {
+  if (logger.writeStream && !logger.writeStream.destroyed) {
+    try {
+      logger.writeStream.end();
+    } catch {
+      // Ignore cleanup errors on exit
+    }
+  }
+});
 
 export default logger;
 export { LOG_LEVELS };
