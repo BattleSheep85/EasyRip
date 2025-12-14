@@ -383,10 +383,34 @@ export class ExportWatcher {
       }
 
       // Pre-calculate episode assignments
-      const assignments = await preCalculateEpisodeAssignments(processable, tracker, tmdb);
-      for (const [discName, assignment] of assignments) {
-        this.episodeAssignments.set(discName, assignment);
-        log.info(`Pre-assigned ${discName}: S${assignment.season} E${assignment.startEpisode}-E${assignment.endEpisode}`);
+      // **NEW**: Check if intelligent episode detection is available for ALL discs
+      const allHaveIntelligentDetection = processable.every(disc =>
+        disc.metadata.episodes &&
+        disc.metadata.episodes.season &&
+        disc.metadata.episodes.startEpisode
+      );
+
+      if (allHaveIntelligentDetection) {
+        // Use intelligent correlation results directly
+        log.info('[Parallel Export] Using intelligent episode detection for all discs');
+        for (const disc of processable) {
+          const assignment = {
+            season: disc.metadata.episodes.season,
+            startEpisode: disc.metadata.episodes.startEpisode,
+            endEpisode: disc.metadata.episodes.endEpisode,
+            episodes: [] // Will be populated from TMDB if available
+          };
+          this.episodeAssignments.set(disc.name, assignment);
+          log.info(`Pre-assigned ${disc.name}: S${assignment.season} E${assignment.startEpisode}-E${assignment.endEpisode} (intelligent detection, confidence: ${disc.metadata.episodes.confidence})`);
+        }
+      } else {
+        // Fallback to old calculation method
+        log.info('[Parallel Export] Using fallback episode calculation (no intelligent detection)');
+        const assignments = await preCalculateEpisodeAssignments(processable, tracker, tmdb);
+        for (const [discName, assignment] of assignments) {
+          this.episodeAssignments.set(discName, assignment);
+          log.info(`Pre-assigned ${discName}: S${assignment.season} E${assignment.startEpisode}-E${assignment.endEpisode} (fallback method)`);
+        }
       }
     } catch (err) {
       log.error(`Failed to pre-calculate episode assignments: ${err.message}`);
@@ -974,15 +998,6 @@ export class ExportWatcher {
       log.debug('No existing season tracker found');
     }
 
-    // Extract season from label or metadata
-    const season = job.metadata.tvInfo?.season ||
-                   job.metadata.llmGuess?.tvInfo?.season ||
-                   extractSeasonFromLabel(discLabel) || 1;
-
-    // Calculate starting episode using tracker and disc number
-    const discNum = extractDiscNumberFromLabel(discLabel);
-    this.emitLog(job.name, `Disc ${discNum || '?'}, Season ${season} - checking for previous exports...`);
-
     // Analyze disc to detect episode titles
     this.emitProgress(job.name, 8, 'Analyzing TV disc for episodes...');
     const analysis = await analyzeDiscForEpisodes(scanResult.titles, job.metadata);
@@ -994,13 +1009,56 @@ export class ExportWatcher {
       return this.exportSingleTVTitle(job, scanResult, transferConfig, libraryPath);
     }
 
-    // Calculate correct starting episode
-    const startEpisode = calculateStartEpisode({
-      season,
-      discLabel,
-      tracker: seasonTracker,
-      episodeCount: analysis.episodes.length
-    });
+    // **NEW**: Check if intelligent episode detection results are available
+    let season, startEpisode;
+    if (job.metadata.episodes && job.metadata.episodes.season && job.metadata.episodes.startEpisode) {
+      // Use intelligent correlation results from episode detector
+      season = job.metadata.episodes.season;
+      startEpisode = job.metadata.episodes.startEpisode;
+      this.emitLog(job.name, `Using intelligent episode detection: Season ${season}, Episodes ${startEpisode}-${job.metadata.episodes.endEpisode} (confidence: ${job.metadata.episodes.confidence}, ${job.metadata.episodes.heuristicUsed})`);
+      this.emitLog(job.name, `Reason: ${job.metadata.episodes.correlationReason}`);
+    } else {
+      // Pre-flight: Try episode detection if metadata.episodes not yet populated (async identification still running)
+      this.emitLog(job.name, `No pre-calculated episode detection found, attempting pre-flight detection...`);
+      try {
+        const episodeDetector = new (await import('./metadata/episode-detector.js')).EpisodeDetector();
+        const preFlightResult = await episodeDetector.detectEpisodeNumbers({
+          discPath: job.path,
+          discType: job.metadata.disc?.type === 'Blu-ray' ? 'bluray' : 'dvd',
+          volumeLabel: discLabel,
+          tmdbId: job.metadata.tmdb?.id || null,
+          currentSeasonHint: extractSeasonFromLabel(discLabel)
+        });
+
+        if (preFlightResult && preFlightResult.season) {
+          season = preFlightResult.season;
+          startEpisode = preFlightResult.startEpisode;
+          this.emitLog(job.name, `Pre-flight detection succeeded: Season ${season}, Episodes ${startEpisode}-${preFlightResult.endEpisode} (confidence: ${preFlightResult.confidence})`);
+          // Update metadata for future exports
+          job.metadata.episodes = preFlightResult;
+        } else {
+          throw new Error('Pre-flight detection returned no result');
+        }
+      } catch (preflightError) {
+        this.emitLog(job.name, `Pre-flight detection failed: ${preflightError.message}, falling back to sequential numbering`);
+
+        // Fallback to sequential numbering (old method)
+        season = job.metadata.tvInfo?.season ||
+                 job.metadata.llmGuess?.tvInfo?.season ||
+                 extractSeasonFromLabel(discLabel) || 1;
+
+        const discNum = extractDiscNumberFromLabel(discLabel);
+        this.emitLog(job.name, `Disc ${discNum || '?'}, Season ${season} - using sequential episode numbering (fallback)`);
+
+        startEpisode = calculateStartEpisode({
+          season,
+          discLabel,
+          tracker: seasonTracker,
+          episodeCount: analysis.episodes.length
+        });
+        this.emitLog(job.name, `Fallback method: Starting at episode ${startEpisode} (no intelligent detection available)`);
+      }
+    }
 
     // Re-number episodes based on correct starting point
     const episodes = analysis.episodes.map((ep, idx) => ({
@@ -1010,7 +1068,6 @@ export class ExportWatcher {
     }));
 
     this.emitLog(job.name, `Detected ${episodes.length} episodes for ${showTitle} Season ${season}`);
-    this.emitLog(job.name, `Starting at episode ${startEpisode} (based on ${seasonTracker[`season${season}`]?.lastEpisode ? 'tracker' : 'disc number'})`);
     if (analysis.playAllTitle) {
       this.emitLog(job.name, `Excluding "Play All" title ${analysis.playAllTitle.index} (${analysis.playAllTitle.durationDisplay})`);
     }
