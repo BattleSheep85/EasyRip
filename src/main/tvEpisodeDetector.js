@@ -422,11 +422,27 @@ export function extractDiscNumberFromLabel(label) {
  * @param {Object} tmdbData - TMDB TV show data
  * @param {number} season - Season number to match
  * @param {number} startEpisode - Starting episode number on this disc
+ * @param {Object} metadata - Disc metadata (optional, for intelligent detection)
  * @returns {Promise<Array>} Matched episodes with TMDB data
  */
-export async function matchEpisodesToTMDB(episodeTitles, tmdbData, season, startEpisode = 1) {
+export async function matchEpisodesToTMDB(episodeTitles, tmdbData, season, startEpisode = 1, metadata = null) {
   if (!episodeTitles || episodeTitles.length === 0) {
     return [];
+  }
+
+  // **NEW**: Check if intelligent episode detection is available
+  let actualSeason = season;
+  let actualStartEpisode = startEpisode;
+  let usingIntelligentDetection = false;
+
+  if (metadata?.episodes && metadata.episodes.season && metadata.episodes.startEpisode) {
+    // Use intelligent correlation results from episode detector
+    actualSeason = metadata.episodes.season;
+    actualStartEpisode = metadata.episodes.startEpisode;
+    usingIntelligentDetection = true;
+    log.info(`Using intelligent episode detection: Season ${actualSeason}, starting at episode ${actualStartEpisode} (confidence: ${metadata.episodes.confidence}, ${metadata.episodes.heuristicUsed})`);
+  } else {
+    log.info(`Using sequential episode numbering (fallback): Season ${actualSeason}, starting at episode ${actualStartEpisode}`);
   }
 
   const tmdbClient = getTMDBClient();
@@ -435,8 +451,8 @@ export async function matchEpisodesToTMDB(episodeTitles, tmdbData, season, start
   // Try to get TMDB season data
   if (tmdbData?.id) {
     try {
-      seasonData = await tmdbClient.getTVSeasonDetails(tmdbData.id, season);
-      log.info(`Got TMDB season ${season} data: ${seasonData?.episodes?.length || 0} episodes`);
+      seasonData = await tmdbClient.getTVSeasonDetails(tmdbData.id, actualSeason);
+      log.info(`Got TMDB season ${actualSeason} data: ${seasonData?.episodes?.length || 0} episodes`);
     } catch (err) {
       log.warn(`Could not fetch TMDB season data: ${err.message}`);
     }
@@ -445,7 +461,7 @@ export async function matchEpisodesToTMDB(episodeTitles, tmdbData, season, start
   // Match episodes by position (simple sequential matching)
   // This works for most TV discs where episodes are in order
   const matchedEpisodes = episodeTitles.map((title, idx) => {
-    const episodeNum = startEpisode + idx;
+    const episodeNum = actualStartEpisode + idx;
     const tmdbEpisode = seasonData?.episodes?.find(ep => ep.episodeNumber === episodeNum);
 
     return {
@@ -458,7 +474,7 @@ export async function matchEpisodesToTMDB(episodeTitles, tmdbData, season, start
       chapters: title.chapters,
 
       // Episode info (from TMDB or inferred)
-      season: season,
+      season: actualSeason,
       episode: episodeNum,
       episodeTitle: tmdbEpisode?.name || `Episode ${episodeNum}`,
       overview: tmdbEpisode?.overview || '',
@@ -466,12 +482,12 @@ export async function matchEpisodesToTMDB(episodeTitles, tmdbData, season, start
       runtime: tmdbEpisode?.runtime || Math.round(title.duration / 60),
 
       // Match confidence
-      matchSource: tmdbEpisode ? 'tmdb' : 'sequential',
-      matchConfidence: tmdbEpisode ? 0.9 : 0.7
+      matchSource: tmdbEpisode ? 'tmdb' : (usingIntelligentDetection ? 'intelligent' : 'sequential'),
+      matchConfidence: tmdbEpisode ? 0.9 : (usingIntelligentDetection ? 0.85 : 0.7)
     };
   });
 
-  log.info(`Matched ${matchedEpisodes.length} episodes to season ${season}, starting at ep ${startEpisode}`);
+  log.info(`Matched ${matchedEpisodes.length} episodes to season ${actualSeason}, starting at ep ${actualStartEpisode} (method: ${usingIntelligentDetection ? 'intelligent detection' : 'sequential fallback'})`);
   return matchedEpisodes;
 }
 
@@ -527,12 +543,26 @@ export async function analyzeDiscForEpisodes(titles, metadata) {
                          extractStartEpisodeFromLabel(metadata?.disc?.volumeLabel) ||
                          1;
 
-    // Match to TMDB
+    // **NEW**: Check if intelligent episode detection is available
+    // If metadata.episodes exists, it should override the extracted season/startEpisode
+    let finalSeason = season;
+    let finalStartEpisode = startEpisode;
+
+    if (metadata?.episodes && metadata.episodes.season && metadata.episodes.startEpisode) {
+      finalSeason = metadata.episodes.season;
+      finalStartEpisode = metadata.episodes.startEpisode;
+      log.info(`Using intelligent episode detection: Season ${finalSeason}, starting at episode ${finalStartEpisode} (confidence: ${metadata.episodes.confidence})`);
+    } else {
+      log.info(`Using extracted season/episode: Season ${finalSeason}, starting at episode ${finalStartEpisode} (no intelligent detection available)`);
+    }
+
+    // Match to TMDB (pass metadata so matchEpisodesToTMDB can also check for intelligent detection)
     const matched = await matchEpisodesToTMDB(
       episodeTitles,
       metadata?.tmdb,
-      season,
-      startEpisode
+      finalSeason,
+      finalStartEpisode,
+      metadata
     );
 
     result.episodes = matched;
