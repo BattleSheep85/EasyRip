@@ -4,6 +4,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useToast } from '../common/Toast.jsx';
+import ExternalLink from '../common/ExternalLink.jsx';
 
 function AboutSettings() {
   const toast = useToast();
@@ -160,38 +161,24 @@ function AboutSettings() {
         <h3>Links</h3>
 
         <div className="about-links">
-          <a
+          <ExternalLink
             href="https://github.com/yourusername/easyrip"
-            target="_blank"
-            rel="noopener noreferrer"
             className="about-link"
           >
             GitHub Repository
-          </a>
-          <a
+          </ExternalLink>
+          <ExternalLink
             href="https://www.themoviedb.org/"
-            target="_blank"
-            rel="noopener noreferrer"
             className="about-link"
           >
             TMDB (Metadata Source)
-          </a>
-          <a
+          </ExternalLink>
+          <ExternalLink
             href="https://www.makemkv.com/"
-            target="_blank"
-            rel="noopener noreferrer"
             className="about-link"
           >
             MakeMKV
-          </a>
-          <a
-            href="https://github.com/xinntao/Real-ESRGAN"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="about-link"
-          >
-            Real-ESRGAN
-          </a>
+          </ExternalLink>
         </div>
       </section>
 
@@ -201,7 +188,6 @@ function AboutSettings() {
         <div className="about-credits">
           <p>Built with Electron, React, and MakeMKV</p>
           <p>Metadata provided by The Movie Database (TMDB)</p>
-          <p>AI upscaling powered by Real-ESRGAN</p>
         </div>
       </section>
     </div>

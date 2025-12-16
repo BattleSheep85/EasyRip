@@ -79,7 +79,7 @@ class CredentialStore {
 
   /**
    * Store an encrypted credential
-   * @param {string} key - Credential key (e.g., 'upscale-ssh-password')
+   * @param {string} key - Credential key (e.g., 'transfer-ssh-password')
    * @param {string} value - Plain text value to encrypt
    */
   async setCredential(key, value) {

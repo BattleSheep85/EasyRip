@@ -31,6 +31,13 @@ const QUERY_TIMEOUT = 120000; // 2 minutes for LLM response
  * Model selection options with VRAM requirements and capabilities
  */
 const MODEL_SELECTIONS = {
+  gptoss: {
+    name: 'gpt-oss:20b',
+    vram: 12,
+    reasoning: 'excellent',
+    speed: 'moderate',
+    description: 'GPT-OSS 20B - strong reasoning model, moderate VRAM'
+  },
   phi4: {
     name: 'phi4',
     vram: 14,
@@ -485,7 +492,7 @@ export class OllamaManager {
    */
   async selectOptimalModel() {
     // Try models in order of preference (if available)
-    const preferredOrder = ['phi4', 'llama31', 'deepseek', 'default'];
+    const preferredOrder = ['gptoss', 'phi4', 'llama31', 'deepseek', 'default'];
 
     for (const key of preferredOrder) {
       const model = MODEL_SELECTIONS[key];

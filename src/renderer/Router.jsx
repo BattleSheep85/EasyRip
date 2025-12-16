@@ -8,6 +8,7 @@ import { HashRouter, Routes, Route } from 'react-router-dom';
 import { SettingsProvider } from './context/SettingsContext.jsx';
 import { ThemeProvider } from './context/ThemeContext.jsx';
 import { AutomationProvider } from './context/AutomationContext.jsx';
+import { DriveProvider } from './context/DriveContext.jsx';
 import { ToastProvider } from './components/common/Toast.jsx';
 import ErrorBoundary from './components/common/ErrorBoundary.jsx';
 import AppLayout from './components/layout/AppLayout.jsx';
@@ -131,8 +132,9 @@ function AppRouter() {
         <SettingsProvider>
           <ThemeProvider>
             <AutomationProvider>
-              <ToastProvider>
-                <AppShell>
+              <DriveProvider>
+                <ToastProvider>
+                  <AppShell>
                   <Routes>
                     {/* Main views */}
                     <Route path="/" element={<HomePage />} />
@@ -145,7 +147,8 @@ function AppRouter() {
                     <Route path="/settings/:tab" element={<SettingsPage />} />
                   </Routes>
                 </AppShell>
-              </ToastProvider>
+                </ToastProvider>
+              </DriveProvider>
             </AutomationProvider>
           </ThemeProvider>
         </SettingsProvider>

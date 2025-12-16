@@ -19,6 +19,7 @@ import { EmbyExporter } from './emby.js';
 import { getTransferManager } from './transfer.js';
 import { getDiscIdentifier } from './metadata/identifier.js';
 import { MetadataStatus, MediaType } from './metadata/schemas.js';
+import { getTMDBClient } from './metadata/tmdb.js';
 import { writeMovieNfo, writeTvShowNfo, writeEpisodeNfo } from './nfo.js';
 import {
   analyzeDiscForEpisodes,
@@ -393,15 +394,41 @@ export class ExportWatcher {
       if (allHaveIntelligentDetection) {
         // Use intelligent correlation results directly
         log.info('[Parallel Export] Using intelligent episode detection for all discs');
+
+        // **CRITICAL FIX**: Track cumulative episode offset to handle multiple discs correctly
+        // Even with intelligent detection, if all discs say "E01-E04", we need to offset them
+        let cumulativeOffset = 0;
+
         for (const disc of processable) {
+          const season = disc.metadata.episodes.season;
+          let startEpisode = disc.metadata.episodes.startEpisode;
+          const episodeCount = disc.metadata.episodes.episodeCount || (disc.metadata.episodes.endEpisode - disc.metadata.episodes.startEpisode + 1);
+
+          // Check season tracker for already-exported episodes
+          const trackerKey = `season${season}`;
+          if (tracker[trackerKey]?.lastEpisode) {
+            const trackerNextEpisode = tracker[trackerKey].lastEpisode + 1;
+            if (trackerNextEpisode > startEpisode + cumulativeOffset) {
+              log.info(`[Parallel] Tracker override for ${disc.name}: tracker says start at E${trackerNextEpisode}`);
+              cumulativeOffset = trackerNextEpisode - startEpisode;
+            }
+          }
+
+          // Apply cumulative offset for this batch of discs
+          const adjustedStart = startEpisode + cumulativeOffset;
+          const adjustedEnd = adjustedStart + episodeCount - 1;
+
           const assignment = {
-            season: disc.metadata.episodes.season,
-            startEpisode: disc.metadata.episodes.startEpisode,
-            endEpisode: disc.metadata.episodes.endEpisode,
+            season: season,
+            startEpisode: adjustedStart,
+            endEpisode: adjustedEnd,
             episodes: [] // Will be populated from TMDB if available
           };
           this.episodeAssignments.set(disc.name, assignment);
-          log.info(`Pre-assigned ${disc.name}: S${assignment.season} E${assignment.startEpisode}-E${assignment.endEpisode} (intelligent detection, confidence: ${disc.metadata.episodes.confidence})`);
+          log.info(`Pre-assigned ${disc.name}: S${season} E${adjustedStart}-E${adjustedEnd} (intelligent detection + tracker offset, confidence: ${disc.metadata.episodes.confidence})`);
+
+          // Update cumulative offset for next disc in this batch
+          cumulativeOffset += episodeCount;
         }
       } else {
         // Fallback to old calculation method
@@ -537,16 +564,35 @@ export class ExportWatcher {
       return this.exportSingleTVTitle(job, job.scanResult, transferConfig, libraryPath);
     }
 
+    // **FIX**: Fetch TMDB season data to get correct episode titles for actual episode numbers
+    let tmdbSeasonData = null;
+    const tmdbId = job.metadata.tmdb?.id;
+    if (tmdbId) {
+      try {
+        const tmdb = getTMDBClient();
+        tmdbSeasonData = await tmdb.getTVSeasonDetails(tmdbId, season);
+        this.emitLog(job.name, `Fetched TMDB season ${season} data: ${tmdbSeasonData?.episodes?.length || 0} episodes`);
+      } catch (tmdbErr) {
+        log.warn(`Failed to fetch TMDB season data: ${tmdbErr.message}`);
+      }
+    }
+
     // Re-number episodes based on pre-calculated assignment
-    const episodes = episodeAnalysis.episodes.map((ep, idx) => ({
-      ...ep,
-      season: season,
-      episode: startEpisode + idx,
-      // Use TMDB data from pre-calculation if available
-      episodeTitle: assignment.episodes[idx]?.episodeTitle || ep.episodeTitle,
-      overview: assignment.episodes[idx]?.overview || ep.overview,
-      airDate: assignment.episodes[idx]?.airDate || ep.airDate
-    }));
+    // **FIX**: Look up TMDB titles by ACTUAL episode number, not disc index
+    const episodes = episodeAnalysis.episodes.map((ep, idx) => {
+      const actualEpisodeNum = startEpisode + idx;
+      const tmdbEpisode = tmdbSeasonData?.episodes?.find(e => e.episodeNumber === actualEpisodeNum);
+
+      return {
+        ...ep,
+        season: season,
+        episode: actualEpisodeNum,
+        // Use TMDB data for the ACTUAL episode number
+        episodeTitle: tmdbEpisode?.name || `Episode ${actualEpisodeNum}`,
+        overview: tmdbEpisode?.overview || ep.overview || '',
+        airDate: tmdbEpisode?.airDate || ep.airDate || ''
+      };
+    });
 
     this.emitLog(job.name, `Exporting ${episodes.length} episodes (pre-calculated assignment)`);
 
@@ -1016,8 +1062,20 @@ export class ExportWatcher {
       // Use intelligent correlation results from episode detector
       season = job.metadata.episodes.season;
       startEpisode = job.metadata.episodes.startEpisode;
-      this.emitLog(job.name, `Using intelligent episode detection: Season ${season}, Episodes ${startEpisode}-${job.metadata.episodes.endEpisode} (confidence: ${job.metadata.episodes.confidence}, ${job.metadata.episodes.heuristicUsed})`);
+      this.emitLog(job.name, `Metadata episode detection: Season ${season}, Episodes ${startEpisode}-${job.metadata.episodes.endEpisode} (confidence: ${job.metadata.episodes.confidence}, ${job.metadata.episodes.heuristicUsed})`);
       this.emitLog(job.name, `Reason: ${job.metadata.episodes.correlationReason}`);
+
+      // **CRITICAL FIX**: Check season tracker - if episodes already exported for this season,
+      // the tracker's lastEpisode takes precedence over metadata's startEpisode
+      // This prevents multiple discs from all exporting as E01-E04
+      const trackerKey = `season${season}`;
+      if (seasonTracker[trackerKey]?.lastEpisode) {
+        const trackerNextEpisode = seasonTracker[trackerKey].lastEpisode + 1;
+        if (trackerNextEpisode > startEpisode) {
+          this.emitLog(job.name, `Season tracker override: Already exported up to E${seasonTracker[trackerKey].lastEpisode}, starting at E${trackerNextEpisode} instead of E${startEpisode}`);
+          startEpisode = trackerNextEpisode;
+        }
+      }
     } else {
       // Pre-flight: Try episode detection if metadata.episodes not yet populated (async identification still running)
       this.emitLog(job.name, `No pre-calculated episode detection found, attempting pre-flight detection...`);
@@ -1061,12 +1119,35 @@ export class ExportWatcher {
       }
     }
 
+    // **FIX**: Fetch TMDB season data to get correct episode titles for actual episode numbers
+    let tmdbSeasonData = null;
+    const tmdbId = job.metadata.tmdb?.id;
+    if (tmdbId) {
+      try {
+        const tmdb = getTMDBClient();
+        tmdbSeasonData = await tmdb.getTVSeasonDetails(tmdbId, season);
+        this.emitLog(job.name, `Fetched TMDB season ${season} data: ${tmdbSeasonData?.episodes?.length || 0} episodes`);
+      } catch (tmdbErr) {
+        log.warn(`Failed to fetch TMDB season data: ${tmdbErr.message}`);
+      }
+    }
+
     // Re-number episodes based on correct starting point
-    const episodes = analysis.episodes.map((ep, idx) => ({
-      ...ep,
-      season: season,
-      episode: startEpisode + idx
-    }));
+    // **FIX**: Look up TMDB titles by ACTUAL episode number, not disc index
+    const episodes = analysis.episodes.map((ep, idx) => {
+      const actualEpisodeNum = startEpisode + idx;
+      const tmdbEpisode = tmdbSeasonData?.episodes?.find(e => e.episodeNumber === actualEpisodeNum);
+
+      return {
+        ...ep,
+        season: season,
+        episode: actualEpisodeNum,
+        // Use TMDB data for the ACTUAL episode number
+        episodeTitle: tmdbEpisode?.name || ep.episodeTitle || `Episode ${actualEpisodeNum}`,
+        overview: tmdbEpisode?.overview || ep.overview || '',
+        airDate: tmdbEpisode?.airDate || ep.airDate || ''
+      };
+    });
 
     this.emitLog(job.name, `Detected ${episodes.length} episodes for ${showTitle} Season ${season}`);
     if (analysis.playAllTitle) {

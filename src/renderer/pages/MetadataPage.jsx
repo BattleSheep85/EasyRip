@@ -18,7 +18,7 @@ function MetadataPage() {
   const [queueStatus, setQueueStatus] = useState(null);
   const [exportQueueStatus, setExportQueueStatus] = useState(null);
   const [progressInfo, setProgressInfo] = useState(null);
-  const [filter, setFilter] = useState('all');
+  const [filter, setFilter] = useState('pending'); // Default to pending items needing attention
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [editingBackup, setEditingBackup] = useState(null);
   const [tmdbSearch, setTmdbSearch] = useState(null);

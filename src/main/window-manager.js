@@ -1,6 +1,6 @@
 // Window management for the main Electron application
 
-import { BrowserWindow, app } from 'electron';
+import { BrowserWindow, app, shell } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -24,20 +24,50 @@ export function createWindow() {
     },
   });
 
-  // In development, load from Vite dev server
-  const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+  // In development or test mode, load from Vite dev server
+  const isDev = (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test') || !app.isPackaged;
 
   if (isDev) {
-    mainWindow.loadURL('http://localhost:5173').catch(err => {
-      console.error('Failed to load dev server:', err);
-      mainWindow.loadURL(`data:text/html,<h1>Error loading dev server</h1><p>Make sure Vite is running on port 5173</p><pre>${err}</pre>`);
+    // Use environment variable if set (for testing with dynamic ports), otherwise default to 5173
+    const devServerUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173';
+    mainWindow.loadURL(devServerUrl).catch(err => {
+      console.error(`Failed to load dev server at ${devServerUrl}:`, err);
+      mainWindow.loadURL(`data:text/html,<h1>Error loading dev server</h1><p>Tried to load: ${devServerUrl}</p><pre>${err}</pre>`);
     });
-    mainWindow.webContents.openDevTools();
+    // Don't open DevTools during tests (NODE_ENV is set to 'test' by test runner)
+    if (process.env.NODE_ENV !== 'test') {
+      mainWindow.webContents.openDevTools();
+    }
   } else {
     // In production, load the built renderer from dist-renderer
     // __dirname is app.asar/src/main, so go up twice to reach app.asar root
     mainWindow.loadFile(path.join(__dirname, '../../dist-renderer/index.html'));
   }
+
+  // Security: Intercept navigation to external URLs and open in OS browser
+  // This prevents external links from loading inside Electron
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const parsedUrl = new URL(url);
+    // Allow navigation to localhost (dev server) and file:// protocol (production)
+    if (parsedUrl.protocol === 'file:' || parsedUrl.hostname === 'localhost') {
+      return; // Allow internal navigation
+    }
+    // Block external navigation and open in OS browser instead
+    event.preventDefault();
+    shell.openExternal(url);
+  });
+
+  // Security: Handle window.open() calls - open external URLs in OS browser
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    const parsedUrl = new URL(url);
+    // Allow internal URLs to open in new Electron window (if needed)
+    if (parsedUrl.protocol === 'file:' || parsedUrl.hostname === 'localhost') {
+      return { action: 'allow' };
+    }
+    // External URLs: open in OS browser, deny new Electron window
+    shell.openExternal(url);
+    return { action: 'deny' };
+  });
 
   return mainWindow;
 }

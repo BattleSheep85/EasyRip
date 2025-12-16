@@ -135,7 +135,7 @@ export class DriveDetector {
           readdirSync(driveLetter + '/');
 
           // If we get here, the drive has readable media
-          // Get volume label using vol command
+          // Get volume label using vol command (fresh query each time)
           let volumeName = 'Unknown Disc';
           try {
             const volOutput = execFileSync('cmd', ['/c', 'vol', driveLetter], {
@@ -147,15 +147,16 @@ export class DriveDetector {
             if (match?.[1]) {
               volumeName = match[1].trim();
             }
+            logger.debug('drives', `Volume name for ${driveLetter}: "${volumeName}" (raw: ${volOutput.trim()})`);
           } catch (volErr) {
-            logger.debug('drives', `Could not get volume label for ${driveLetter}: ${volErr.message}`);
+            logger.warn('drives', `Could not get volume label for ${driveLetter}: ${volErr.message}`);
           }
 
           drivesWithMedia.push({
             driveLetter,
             volumeName,
           });
-          logger.info('drives', `${driveLetter} has media: ${volumeName}`);
+          logger.info('drives', `${driveLetter} has media: "${volumeName}"`);
         } catch (err) {
           // readdirSync fails = no media or unreadable disc
           const reason = err.code === 'ENOENT' ? 'no disc' :
@@ -164,6 +165,10 @@ export class DriveDetector {
                          err.code || 'unknown error';
           logger.debug('drives', `${driveLetter} - ${reason}`);
         }
+      }
+
+      if (drivesWithMedia.length > 0) {
+        logger.info('drives', `Drives with media: ${drivesWithMedia.map(d => `${d.driveLetter}(${d.volumeName})`).join(', ')}`);
       }
 
       // Get MakeMKV disc index mapping

@@ -1,151 +1,34 @@
 /**
  * HomePage - Drives view (main backup functionality)
- * Extracted drive management from App.jsx
+ * Uses DriveContext for persistent state across navigation
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { formatSize, sanitizeDiscName } from '../../shared/utils.js';
-import { useSettings } from '../context/SettingsContext.jsx';
+import { formatSize } from '../../shared/utils.js';
 import { useAutomation } from '../context/AutomationContext.jsx';
-import { useToast } from '../components/common/Toast.jsx';
+import { useDrives } from '../context/DriveContext.jsx';
 
 function HomePage() {
-  const { settings } = useSettings();
   const { automation, toggleAutomation } = useAutomation();
-  const toast = useToast();
+  const {
+    drives,
+    driveStates,
+    driveLogs,
+    isScanning,
+    error,
+    activeLogTab,
+    setActiveLogTab,
+    scanDrives,
+    startBackup,
+    cancelBackup,
+    redoBackup,
+    clearError,
+  } = useDrives();
 
-  // Local UI state
-  const [drives, setDrives] = useState([]);
-  const [driveStates, setDriveStates] = useState({});
-  const [driveLogs, setDriveLogs] = useState({});
-  const [isScanning, setIsScanning] = useState(false);
-  const [error, setError] = useState(null);
-  const [activeLogTab, setActiveLogTab] = useState(null);
   const logEndRef = useRef(null);
-  const initRef = useRef(false);
 
   // Confirmation dialog state for Re-Do
   const [confirmRedo, setConfirmRedo] = useState(null);
-
-  // Initialize and set up listeners
-  useEffect(() => {
-    if (!window.electronAPI) {
-      console.warn('Not running in Electron - electronAPI not available');
-      return;
-    }
-
-    window.electronAPI.removeBackupListeners();
-    console.log('[HomePage] Setting up IPC listeners');
-
-    const isFirstMount = !initRef.current;
-    initRef.current = true;
-
-    if (isFirstMount) {
-      window.electronAPI.cleanupOrphanTemps().then(result => {
-        if (result.success && result.cleaned > 0) {
-          console.log(`Cleaned up ${result.cleaned} orphan temp folder(s)`);
-        }
-        handleScanDrives();
-      }).catch(err => {
-        console.error('Cleanup error:', err);
-        handleScanDrives();
-      });
-    }
-
-    // Listen for progress updates
-    window.electronAPI.onBackupProgress((data) => {
-      if (data.percent >= 95 || data.percent % 25 === 0) {
-        console.log(`[HomePage] Progress: driveId=${data.driveId}, percent=${data.percent?.toFixed(1)}%`);
-      }
-      setDriveStates(prev => ({
-        ...prev,
-        [data.driveId]: {
-          ...prev[data.driveId],
-          progress: data.percent,
-          status: data.percent >= 100 ? 'complete' : 'running',
-        }
-      }));
-    });
-
-    // Listen for log updates (with ring buffer to prevent unbounded growth)
-    window.electronAPI.onBackupLog((data) => {
-      const MAX_LOGS_PER_DRIVE = 1000;
-      setDriveLogs(prev => {
-        const currentLogs = prev[data.driveId] || [];
-        const newLogs = [...currentLogs, data.line];
-        return {
-          ...prev,
-          [data.driveId]: newLogs.length > MAX_LOGS_PER_DRIVE
-            ? newLogs.slice(-MAX_LOGS_PER_DRIVE)
-            : newLogs
-        };
-      });
-    });
-
-    // Listen for queue status
-    window.electronAPI.onBackupQueued((data) => {
-      setDriveStates(prev => ({
-        ...prev,
-        [data.driveId]: {
-          ...prev[data.driveId],
-          status: 'queued',
-          queuePosition: data.position,
-          queueTotal: data.total
-        }
-      }));
-      setDriveLogs(prev => ({
-        ...prev,
-        [data.driveId]: [...(prev[data.driveId] || []), `Queued for backup (position ${data.position} of ${data.total})`]
-      }));
-    });
-
-    // Listen for backup starting
-    window.electronAPI.onBackupStarted((data) => {
-      setDriveStates(prev => ({
-        ...prev,
-        [data.driveId]: {
-          ...prev[data.driveId],
-          status: 'running',
-          progress: 0,
-          queuePosition: null
-        }
-      }));
-      setDriveLogs(prev => ({
-        ...prev,
-        [data.driveId]: [...(prev[data.driveId] || []), 'Backup starting now...']
-      }));
-    });
-
-    // Listen for backup completion
-    window.electronAPI.onBackupComplete((data) => {
-      console.log('[HomePage] Received backup-complete event:', data);
-      if (data.success) {
-        setDriveStates(prev => ({
-          ...prev,
-          [data.driveId]: {
-            status: data.alreadyExists ? 'exists' : 'complete',
-            progress: 100,
-            backupSize: data.size
-          }
-        }));
-      } else {
-        setDriveStates(prev => ({
-          ...prev,
-          [data.driveId]: {
-            status: 'error',
-            progress: 0,
-            error: data.error
-          }
-        }));
-      }
-    });
-
-    return () => {
-      if (window.electronAPI) {
-        window.electronAPI.removeBackupListeners();
-      }
-    };
-  }, []);
 
   // Auto-scroll logs
   useEffect(() => {
@@ -154,175 +37,12 @@ function HomePage() {
     }
   }, [driveLogs, activeLogTab]);
 
-  // Scan for drives
-  async function handleScanDrives() {
-    if (!window.electronAPI) return;
-    setIsScanning(true);
-    setError(null);
-
-    try {
-      const result = await window.electronAPI.scanDrives();
-
-      if (result.success) {
-        setDrives(result.drives);
-
-        const states = {};
-        for (const drive of result.drives) {
-          const discName = sanitizeDiscName(drive.discName);
-          const statusResult = await window.electronAPI.checkBackupStatus(discName, drive.discSize || 0);
-
-          if (statusResult.success) {
-            if (statusResult.status === 'complete') {
-              states[drive.id] = {
-                status: 'exists',
-                progress: 100,
-                backupSize: statusResult.backupSize,
-                backupRatio: statusResult.backupRatio,
-              };
-            } else if (statusResult.status === 'incomplete_backup' || statusResult.status === 'incomplete_temp') {
-              states[drive.id] = {
-                status: 'incomplete',
-                progress: statusResult.backupRatio || statusResult.tempRatio || 0,
-                backupSize: statusResult.backupSize || statusResult.tempSize,
-                backupRatio: statusResult.backupRatio || statusResult.tempRatio,
-              };
-            } else {
-              states[drive.id] = driveStates[drive.id] || { status: 'idle', progress: 0 };
-            }
-          } else {
-            states[drive.id] = driveStates[drive.id] || { status: 'idle', progress: 0 };
-          }
-        }
-        setDriveStates(states);
-
-        if (result.drives.length > 0 && activeLogTab === null) {
-          setActiveLogTab(result.drives[0].id);
-        }
-      } else {
-        setError(result.error);
-      }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setIsScanning(false);
-    }
-  }
-
-  // Start backup
-  async function handleStartBackup(drive) {
-    if (!window.electronAPI) return;
-
-    const discName = sanitizeDiscName(drive.discName);
-
-    setDriveStates(prev => ({
-      ...prev,
-      [drive.id]: { status: 'running', progress: 0 }
-    }));
-
-    setDriveLogs(prev => ({
-      ...prev,
-      [drive.id]: [`Starting backup: ${drive.discName}`, `Disc size: ${formatSize(drive.discSize)}`]
-    }));
-
-    setActiveLogTab(drive.id);
-
-    try {
-      const result = await window.electronAPI.startBackup(drive.id, drive.makemkvIndex, discName, drive.discSize || 0, drive.driveLetter);
-
-      if (result.success) {
-        if (result.alreadyExists) {
-          setDriveStates(prev => ({
-            ...prev,
-            [drive.id]: { status: 'exists', progress: 100, backupSize: result.size }
-          }));
-        }
-      } else {
-        setDriveStates(prev => ({
-          ...prev,
-          [drive.id]: { status: 'error', progress: 0, error: result.error }
-        }));
-      }
-    } catch (err) {
-      setDriveStates(prev => ({
-        ...prev,
-        [drive.id]: { status: 'error', progress: 0, error: err.message }
-      }));
-    }
-  }
-
-  // Cancel backup
-  async function handleCancelBackup(driveId) {
-    if (!window.electronAPI) return;
-
-    try {
-      await window.electronAPI.cancelBackup(driveId);
-      setDriveStates(prev => ({
-        ...prev,
-        [driveId]: { status: 'idle', progress: 0 }
-      }));
-      setDriveLogs(prev => ({
-        ...prev,
-        [driveId]: [...(prev[driveId] || []), 'Backup cancelled by user']
-      }));
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  // Re-do backup
+  // Re-do click handler
   function handleRedoClick(drive) {
     if (automation.liveDangerously) {
-      performRedo(drive);
+      redoBackup(drive);
     } else {
       setConfirmRedo({ drive });
-    }
-  }
-
-  async function performRedo(drive) {
-    if (!window.electronAPI) return;
-
-    const discName = sanitizeDiscName(drive.discName);
-
-    setDriveStates(prev => ({
-      ...prev,
-      [drive.id]: { status: 'running', progress: 0 }
-    }));
-
-    setDriveLogs(prev => ({
-      ...prev,
-      [drive.id]: [`RE-DO: Deleting existing backup and starting fresh...`, `Disc: ${drive.discName}`, `Size: ${formatSize(drive.discSize)}`]
-    }));
-
-    setActiveLogTab(drive.id);
-
-    try {
-      const result = await window.electronAPI.deleteAndRestartBackup(
-        drive.id,
-        drive.makemkvIndex,
-        discName,
-        drive.discSize || 0,
-        drive.driveLetter
-      );
-
-      if (!result.success) {
-        setDriveStates(prev => ({
-          ...prev,
-          [drive.id]: { status: 'error', progress: 0, error: result.error }
-        }));
-        setDriveLogs(prev => ({
-          ...prev,
-          [drive.id]: [...(prev[drive.id] || []), `ERROR: ${result.error}`]
-        }));
-      }
-    } catch (err) {
-      setDriveStates(prev => ({
-        ...prev,
-        [drive.id]: { status: 'error', progress: 0, error: err.message }
-      }));
-      setDriveLogs(prev => ({
-        ...prev,
-        [drive.id]: [...(prev[drive.id] || []), `ERROR: ${err.message}`]
-      }));
     }
   }
 
@@ -330,18 +50,18 @@ function HomePage() {
     if (!confirmRedo) return;
     const drive = confirmRedo.drive;
     setConfirmRedo(null);
-    performRedo(drive);
+    redoBackup(drive);
   }
 
-  // Backup all
-  async function handleBackupAll() {
+  // Backup all eligible drives
+  function handleBackupAll() {
     const eligibleDrives = drives.filter(d => {
       const state = driveStates[d.id];
       return !state || state.status === 'idle' || state.status === 'error' || state.status === 'incomplete';
     });
 
     eligibleDrives.forEach(drive => {
-      handleStartBackup(drive);
+      startBackup(drive);
     });
   }
 
@@ -385,14 +105,14 @@ function HomePage() {
       {error && (
         <div className="error-banner">
           <span><strong>Error:</strong> {error}</span>
-          <button onClick={() => setError(null)}>X</button>
+          <button onClick={clearError}>X</button>
         </div>
       )}
 
       {/* Toolbar */}
       <div className="toolbar">
         <button
-          onClick={handleScanDrives}
+          onClick={scanDrives}
           disabled={isScanning}
           className="btn btn-primary"
         >
@@ -544,14 +264,14 @@ function HomePage() {
                       <td className="action-cell">
                         {state.status === 'running' ? (
                           <button
-                            onClick={() => handleCancelBackup(drive.id)}
+                            onClick={() => cancelBackup(drive.id)}
                             className="btn btn-sm btn-danger"
                           >
                             Cancel
                           </button>
                         ) : state.status === 'queued' ? (
                           <button
-                            onClick={() => handleCancelBackup(drive.id)}
+                            onClick={() => cancelBackup(drive.id)}
                             className="btn btn-sm btn-warning"
                             title={`Queued at position #${state.queuePosition}`}
                           >
@@ -567,7 +287,7 @@ function HomePage() {
                           </button>
                         ) : state.status === 'incomplete' ? (
                           <button
-                            onClick={() => handleStartBackup(drive)}
+                            onClick={() => startBackup(drive)}
                             className="btn btn-sm btn-warning"
                             title="Incomplete backup - will delete and restart"
                           >
@@ -575,7 +295,7 @@ function HomePage() {
                           </button>
                         ) : (
                           <button
-                            onClick={() => handleStartBackup(drive)}
+                            onClick={() => startBackup(drive)}
                             disabled={state.status === 'running'}
                             className="btn btn-sm btn-primary"
                           >

@@ -266,6 +266,10 @@ export class EmbyExporter {
 
         if (code === 0) {
           try {
+            // Longer delay to let Windows release file handles (MakeMKV holds locks briefly)
+            logger.debug('emby', 'MakeMKV finished, waiting for file handles to release...');
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
             // Find the generated MKV file
             const files = await fs.readdir(tempOutputDir);
             const mkvFile = files.find(f => f.endsWith('.mkv'));
@@ -274,12 +278,51 @@ export class EmbyExporter {
               throw new Error('No MKV file generated');
             }
 
-            // Move to final destination with correct name
+            // Move to final destination with correct name (retry on EBUSY/EPERM)
             const tempMkvPath = path.join(tempOutputDir, mkvFile);
-            await fs.rename(tempMkvPath, outputPath);
+            let renameAttempts = 0;
+            const maxAttempts = 5;
+            while (renameAttempts < maxAttempts) {
+              try {
+                await fs.rename(tempMkvPath, outputPath);
+                logger.debug('emby', `Renamed MKV successfully after ${renameAttempts} retries`);
+                break;
+              } catch (renameErr) {
+                renameAttempts++;
+                // Check for both EBUSY and EPERM (Windows can use either for locked files)
+                const isLockError = renameErr.code === 'EBUSY' || renameErr.code === 'EPERM' ||
+                                    renameErr.message?.includes('EBUSY') || renameErr.message?.includes('busy');
+                logger.warn('emby', `Rename attempt ${renameAttempts}/${maxAttempts} failed: ${renameErr.code} - ${renameErr.message}`);
+                if (isLockError && renameAttempts < maxAttempts) {
+                  logger.info('emby', `File appears locked, waiting ${renameAttempts * 2}s before retry...`);
+                  await new Promise(resolve => setTimeout(resolve, 2000 * renameAttempts));
+                } else {
+                  throw renameErr;
+                }
+              }
+            }
 
-            // Clean up temp dir
-            await fs.rm(tempOutputDir, { recursive: true, force: true });
+            // Clean up temp dir (retry on EBUSY/EPERM)
+            let rmAttempts = 0;
+            while (rmAttempts < maxAttempts) {
+              try {
+                await fs.rm(tempOutputDir, { recursive: true, force: true });
+                logger.debug('emby', 'Temp directory cleaned up successfully');
+                break;
+              } catch (rmErr) {
+                rmAttempts++;
+                const isLockError = rmErr.code === 'EBUSY' || rmErr.code === 'EPERM' ||
+                                    rmErr.message?.includes('EBUSY') || rmErr.message?.includes('busy');
+                if (isLockError && rmAttempts < maxAttempts) {
+                  logger.warn('emby', `Cleanup attempt ${rmAttempts}/${maxAttempts} blocked, retrying in ${rmAttempts * 2}s...`);
+                  await new Promise(resolve => setTimeout(resolve, 2000 * rmAttempts));
+                } else {
+                  // Log but don't fail on cleanup errors
+                  logger.warn('emby', `Could not clean temp dir after ${rmAttempts} attempts: ${rmErr.message}`);
+                  break;
+                }
+              }
+            }
 
             const stat = await fs.stat(outputPath);
             if (onLog) onLog(`MKV created: ${outputPath} (${this.formatSize(stat.size)})`);

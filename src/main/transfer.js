@@ -194,26 +194,91 @@ export class TransferManager {
       await sftp.connect(connectOptions);
       if (onLog) onLog(`Connected, uploading to: ${remoteDest}`);
 
-      // Ensure remote directory exists
+      // Ensure remote directory exists by creating each level from base path
+      // Note: Don't use recursive mkdir (true) as it fails on mount points
+      // We create directories one level at a time, starting from destBase
       const remoteDir = path.dirname(remoteDest).replace(/\\/g, '/');
-      try {
-        await sftp.mkdir(remoteDir, true);
-      } catch {
-        // Directory might already exist
+      const normalizedBase = destBase.replace(/\\/g, '/');
+
+      // Calculate the relative path from base to target directory
+      // e.g., if destBase is /mnt/raid_hdd_media/tv and remoteDir is /mnt/raid_hdd_media/tv/Show (2003)/Season 01
+      // then relativeDirs would be ['Show (2003)', 'Season 01']
+      let relativePath = remoteDir;
+      if (remoteDir.startsWith(normalizedBase)) {
+        relativePath = remoteDir.slice(normalizedBase.length);
+        if (relativePath.startsWith('/')) relativePath = relativePath.slice(1);
       }
 
-      // Upload with progress
-      const stat = await fs.stat(sourcePath);
+      const dirsToCreate = relativePath ? relativePath.split('/').filter(d => d) : [];
+      logger.debug('transfer', `Base path: ${normalizedBase}`);
+      logger.debug('transfer', `Target dir: ${remoteDir}`);
+      logger.debug('transfer', `Dirs to create: ${JSON.stringify(dirsToCreate)}`);
+
+      // Create each directory level one at a time
+      let currentPath = normalizedBase;
+      for (const dir of dirsToCreate) {
+        currentPath = `${currentPath}/${dir}`;
+        try {
+          const dirExists = await sftp.exists(currentPath);
+          if (!dirExists) {
+            logger.debug('transfer', `Creating directory: ${currentPath}`);
+            await sftp.mkdir(currentPath);
+            logger.info('transfer', `Created remote directory: ${currentPath}`);
+          } else {
+            logger.debug('transfer', `Directory already exists: ${currentPath}`);
+          }
+        } catch (mkdirErr) {
+          // Check if error is "already exists" - these are safe to ignore
+          const errMsg = mkdirErr.message?.toLowerCase() || '';
+          if (errMsg.includes('exist') || errMsg.includes('file already exists')) {
+            logger.debug('transfer', `Directory already exists: ${currentPath}`);
+          } else {
+            // For other errors, try to continue but log the issue
+            logger.warn('transfer', `mkdir warning for ${currentPath}: ${mkdirErr.message}`);
+            // Try to verify if directory exists despite the error
+            try {
+              const verifyExists = await sftp.exists(currentPath);
+              if (verifyExists) {
+                logger.debug('transfer', `Directory verified exists: ${currentPath}`);
+              } else {
+                logger.error('transfer', `Failed to create directory ${currentPath}: ${mkdirErr.message}`);
+                throw new Error(`Cannot create remote directory ${currentPath}: ${mkdirErr.message}`);
+              }
+            } catch (verifyErr) {
+              logger.error('transfer', `Cannot verify directory ${currentPath}: ${verifyErr.message}`);
+              throw new Error(`Cannot create remote directory ${currentPath}: ${mkdirErr.message}`);
+            }
+          }
+        }
+      }
+
+      // Upload with progress - verify file exists first
+      let stat;
+      try {
+        stat = await fs.stat(sourcePath);
+        logger.debug('transfer', `Source file verified: ${sourcePath} (${stat.size} bytes)`);
+      } catch (statErr) {
+        throw new Error(`Source file not found: ${sourcePath} - ${statErr.message}`);
+      }
       const totalSize = stat.size;
       let uploaded = 0;
 
-      await sftp.fastPut(sourcePath, remoteDest, {
-        step: (transferred) => {
-          uploaded = transferred;
-          const percent = (transferred / totalSize) * 100;
-          if (onProgress) onProgress(percent);
-        }
-      });
+      // Normalize source path for SFTP on Windows
+      const normalizedSource = sourcePath.replace(/\\/g, '/');
+      logger.debug('transfer', `Uploading: "${normalizedSource}" -> "${remoteDest}"`);
+
+      try {
+        await sftp.fastPut(normalizedSource, remoteDest, {
+          step: (transferred) => {
+            uploaded = transferred;
+            const percent = (transferred / totalSize) * 100;
+            if (onProgress) onProgress(percent);
+          }
+        });
+      } catch (uploadErr) {
+        // Re-throw with more context
+        throw new Error(`fastPut: ${uploadErr.message} Local: ${sourcePath} Remote: ${remoteDest}`);
+      }
 
       if (onLog) onLog(`Transfer complete: ${remoteDest}`);
       return { success: true, remotePath: remoteDest };

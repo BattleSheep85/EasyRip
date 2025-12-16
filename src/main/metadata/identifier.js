@@ -203,6 +203,67 @@ function isLikelyAbbreviated(label) {
 }
 
 /**
+ * Check if an abbreviated label could plausibly match a series name
+ * Prevents false positives like "BIG_AL" being matched to "One Tree Hill"
+ * @param {string} abbreviation - The potential abbreviation (e.g., "OTH", "BIG_AL")
+ * @param {string} seriesName - The full series name (e.g., "One Tree Hill")
+ * @returns {boolean}
+ */
+function couldBeAbbreviationOf(abbreviation, seriesName) {
+  if (!abbreviation || !seriesName) return false;
+
+  // Clean and normalize both strings
+  const cleanAbbr = abbreviation
+    .toUpperCase()
+    .replace(/[_\s]*(S\d+)?[_\s]*(D\d+)?[_\s]*/g, '')
+    .replace(/[_\s]+/g, '')
+    .trim();
+
+  const cleanSeries = seriesName
+    .toUpperCase()
+    .replace(/[_\s]+/g, ' ')
+    .trim();
+
+  // Get first letters of each word in series name (e.g., "One Tree Hill" → "OTH")
+  const words = cleanSeries.split(' ').filter(w => w.length > 0);
+  const initials = words.map(w => w[0]).join('');
+
+  // Check 1: Does abbreviation match initials exactly? (OTH = OTH)
+  if (cleanAbbr === initials) {
+    log.debug(`Abbreviation "${abbreviation}" matches initials of "${seriesName}"`);
+    return true;
+  }
+
+  // Check 2: Does abbreviation start with the initials? (OTHS1 starts with OTH)
+  if (cleanAbbr.startsWith(initials) && initials.length >= 2) {
+    log.debug(`Abbreviation "${abbreviation}" starts with initials of "${seriesName}"`);
+    return true;
+  }
+
+  // Check 3: Does the first word of the series contain the abbreviation? (e.g., "Friends" for "FRI")
+  if (words.length === 1 && words[0].startsWith(cleanAbbr) && cleanAbbr.length >= 3) {
+    log.debug(`Abbreviation "${abbreviation}" is prefix of single-word series "${seriesName}"`);
+    return true;
+  }
+
+  // Check 4: Do the first 2+ letters of abbreviation match first word's prefix?
+  // This catches cases like "BIG_AL" (BIGAL) vs "One Tree Hill" - BIGAL doesn't match "ONE"
+  const firstWord = words[0] || '';
+  if (cleanAbbr.length >= 3 && firstWord.length >= 3) {
+    // If neither shares a prefix of at least 3 chars, they're likely unrelated
+    const abbrPrefix = cleanAbbr.substring(0, 3);
+    const seriesPrefix = firstWord.substring(0, 3);
+    if (abbrPrefix === seriesPrefix) {
+      log.debug(`Abbreviation "${abbreviation}" shares prefix with "${seriesName}"`);
+      return true;
+    }
+  }
+
+  log.debug(`Abbreviation "${abbreviation}" does NOT match series "${seriesName}" (initials: ${initials})`);
+  return false;
+}
+
+/**
  * Analyze volume label for TV show patterns
  * Detects season markers (S1, S01, SEASON1, SEASON_1, etc.) and disc markers (D1, D01, DISC1, etc.)
  * @param {string} volumeLabel - The disc volume label
@@ -653,8 +714,14 @@ export class DiscIdentifier {
           // No dictionary match - check sibling backups for context
           siblingContext = getSiblingContext(backupPath);
           if (siblingContext.seriesName) {
-            log.info(`Using sibling context: "${siblingContext.seriesName}" (from ${siblingContext.siblingCount} siblings)`);
-            searchHint = siblingContext.seriesName;
+            // IMPORTANT: Validate that the abbreviation could plausibly match the series
+            // This prevents false positives like "BIG_AL" → "One Tree Hill"
+            if (couldBeAbbreviationOf(searchHint, siblingContext.seriesName)) {
+              log.info(`Using sibling context: "${siblingContext.seriesName}" (from ${siblingContext.siblingCount} siblings)`);
+              searchHint = siblingContext.seriesName;
+            } else {
+              log.info(`Sibling context "${siblingContext.seriesName}" does NOT match abbreviated label "${searchHint}" - skipping`);
+            }
           } else {
             log.warn(`Could not expand abbreviated label "${searchHint}" - no dictionary match or sibling context`);
           }

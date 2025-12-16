@@ -5,6 +5,7 @@
 import React, { useState } from 'react';
 import { useSettings } from '../../context/SettingsContext.jsx';
 import { useToast } from '../common/Toast.jsx';
+import ExternalLink from '../common/ExternalLink.jsx';
 
 function GeneralSettings() {
   const { editedSettings, setEditedSettings } = useSettings();
@@ -65,9 +66,9 @@ function GeneralSettings() {
           </div>
           <small>
             Applied to Windows registry on save.{' '}
-            <a href="https://forum.makemkv.com/forum/viewtopic.php?t=1053" target="_blank" rel="noopener noreferrer">
+            <ExternalLink href="https://forum.makemkv.com/forum/viewtopic.php?t=1053">
               Get from forum
-            </a>
+            </ExternalLink>
           </small>
         </div>
       </section>
@@ -85,9 +86,9 @@ function GeneralSettings() {
           />
           <small>
             Get a free API key at{' '}
-            <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer">
+            <ExternalLink href="https://www.themoviedb.org/settings/api">
               themoviedb.org
-            </a>
+            </ExternalLink>
           </small>
         </div>
       </section>
