@@ -73,6 +73,7 @@ export class MakeMKVAdapter {
     this.transfer = null; // Transfer settings (protocol, host, paths)
     this.automation = { autoBackup: false, autoMeta: true, autoExport: false, liveDangerously: false, ejectAfterBackup: false }; // Automation toggles
     this.makemkvPerformance = null; // Performance settings (presets + custom overrides)
+    this.extraction = { defaultMode: 'full_backup', minTitleLength: 10 }; // Extraction mode settings
     // Settings cache for performance optimization
     this.settingsCache = null;
     this.settingsCacheTime = 0;
@@ -92,6 +93,7 @@ export class MakeMKVAdapter {
       this.transfer = settings.transfer || null;
       this.automation = settings.automation || { autoBackup: false, autoMeta: true, autoExport: false, liveDangerously: false, ejectAfterBackup: false };
       this.makemkvPerformance = settings.makemkvPerformance || this.getDefaultPerformanceSettings();
+      this.extraction = settings.extraction || { defaultMode: 'full_backup', minTitleLength: 10 };
     } catch {
       // Settings file doesn't exist yet, use defaults
       this.basePath = 'D:\\EasyRip';
@@ -100,6 +102,7 @@ export class MakeMKVAdapter {
       this.transfer = null;
       this.automation = { autoBackup: false, autoMeta: true, autoExport: false, liveDangerously: false, ejectAfterBackup: false };
       this.makemkvPerformance = this.getDefaultPerformanceSettings();
+      this.extraction = { defaultMode: 'full_backup', minTitleLength: 10 };
     }
     this._settingsLoaded = true;
   }
@@ -120,6 +123,7 @@ export class MakeMKVAdapter {
       this.transfer = settings.transfer || null;
       this.automation = settings.automation || { autoBackup: false, autoMeta: true, autoExport: false, liveDangerously: false, ejectAfterBackup: false };
       this.makemkvPerformance = settings.makemkvPerformance || this.getDefaultPerformanceSettings();
+      this.extraction = settings.extraction || { defaultMode: 'full_backup', minTitleLength: 10 };
     } catch {
       // If file read fails, keep existing cached values
     }
@@ -133,6 +137,7 @@ export class MakeMKVAdapter {
       transfer: this.transfer,
       automation: this.automation,
       makemkvPerformance: this.makemkvPerformance,
+      extraction: this.extraction,
     };
 
     this.settingsCache = settingsObject;
@@ -150,6 +155,7 @@ export class MakeMKVAdapter {
     this.transfer = settings.transfer || null;
     this.automation = settings.automation || { autoBackup: false, autoMeta: true, autoExport: false, liveDangerously: false, ejectAfterBackup: false };
     this.makemkvPerformance = settings.makemkvPerformance || this.getDefaultPerformanceSettings();
+    this.extraction = settings.extraction || { defaultMode: 'full_backup', minTitleLength: 10 };
 
     await fs.writeFile(
       this.settingsPath,
@@ -166,6 +172,7 @@ export class MakeMKVAdapter {
       transfer: this.transfer,
       automation: this.automation,
       makemkvPerformance: this.makemkvPerformance,
+      extraction: this.extraction,
     };
     this.settingsCacheTime = Date.now();
 
@@ -360,9 +367,8 @@ export class MakeMKVAdapter {
     ];
 
     // Add optional flags if configured
-    if (settings.minbuf !== undefined && settings.minbuf !== null && settings.minbuf > 0) {
-      flags.push(`--minlength=${settings.minbuf}`);
-    }
+    // NOTE: --minlength is only added in Smart Extract mode (see startBackup), not here
+    // minbuf is a buffer setting, not related to --minlength (title length filter)
     if (settings.splitSize && settings.splitSize > 0) {
       flags.push(`--split-size=${settings.splitSize}`);
     }
@@ -494,7 +500,7 @@ export class MakeMKVAdapter {
   // Start backup process with log streaming
   // Workflow: rip to temp folder, then copy to backup folder
   // makemkvIndex is the MakeMKV disc:N index from drive detection
-  async startBackup(makemkvIndex, discName, discSize, onProgress, onLog) {
+  async startBackup(makemkvIndex, discName, discSize, onProgress, onLog, extractionMode = 'full_backup') {
     const tempPath = path.join(this.basePath, 'temp', discName);
     const backupPath = path.join(this.basePath, 'backup', discName);
 
@@ -508,13 +514,16 @@ export class MakeMKVAdapter {
 
     // Use disc:N format with the MakeMKV index from drive detection
     const makemkvSource = `disc:${makemkvIndex}`;
-    logger.info('makemkv', `Starting backup for ${discName}`, {
+    const modeLabel = extractionMode === 'smart_extract' ? 'Smart Extract' : 'Full Backup';
+    logger.info('makemkv', `Starting backup for ${discName} [${modeLabel}]`, {
       source: makemkvSource,
       tempPath,
       backupPath,
-      discSize
+      discSize,
+      extractionMode
     });
     if (onLog) onLog(`Using MakeMKV source: ${makemkvSource}`);
+    if (onLog) onLog(`Extraction mode: ${modeLabel}`);
 
     return new Promise(async (resolve, reject) => {
       // Check existing backup status
@@ -580,6 +589,15 @@ export class MakeMKVAdapter {
       // Build MakeMKV flags based on performance settings
       const { flags, settings: perfSettings } = this.buildMakeMKVFlags();
 
+      // Smart Extract mode: Add --minlength flag to skip short titles
+      if (extractionMode === 'smart_extract') {
+        const minTitleLength = this.extraction?.minTitleLength || 10; // minutes
+        const minSeconds = minTitleLength * 60; // convert to seconds
+        flags.push(`--minlength=${minSeconds}`);
+        logger.info('makemkv', `Smart Extract: skipping titles shorter than ${minTitleLength} minutes (${minSeconds} seconds)`);
+        if (onLog) onLog(`Smart Extract: skipping titles < ${minTitleLength} minutes`);
+      }
+
       // Run: makemkvcon backup with performance-optimized flags
       // Flags are dynamically built based on user settings (presets or custom)
       const spawnArgs = ['backup', ...flags, makemkvSource, tempPath];
@@ -588,7 +606,8 @@ export class MakeMKVAdapter {
       logger.info('makemkv-perf', `Starting backup with performance settings`, {
         preset: this.makemkvPerformance?.preset || 'balanced',
         cache: perfSettings.cache,
-        timeout: perfSettings.timeout
+        timeout: perfSettings.timeout,
+        extractionMode
       });
 
       if (onLog) onLog(`Running: makemkvcon backup ${flagsStr} ${makemkvSource} "${tempPath}"`);

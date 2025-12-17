@@ -1753,6 +1753,32 @@ body {
   white-space: nowrap;
 }
 
+/* Extraction mode dropdown in table */
+.mode-cell {
+  white-space: nowrap;
+}
+
+.mode-select {
+  padding: 4px 8px;
+  border: 1px solid var(--sap-gray-3);
+  border-radius: 4px;
+  background: var(--sap-gray-1);
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  min-width: 100px;
+}
+
+.mode-select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.mode-select:focus {
+  outline: none;
+  border-color: var(--primary-color);
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar {
   width: 8px;

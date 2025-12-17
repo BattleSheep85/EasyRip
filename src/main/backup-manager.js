@@ -69,18 +69,20 @@ export function cancelBackup(driveId) {
  * Start a backup for a specific drive
  * Returns { success, driveId, started, fingerprint } or { success: false, error }
  */
-export async function startBackup(driveId, makemkvIndex, discName, discSize, driveLetter, exportWatcher) {
+export async function startBackup(driveId, makemkvIndex, discName, discSize, driveLetter, exportWatcher, extractionMode = 'full_backup') {
   // Check if already running for this drive
   if (runningBackups.has(driveId)) {
     logger.warn('start-backup', `Backup already running for drive ${driveId}`);
     return { success: false, error: 'Backup already running for this drive' };
   }
 
-  logger.info('start-backup', `Starting parallel backup for ${discName} (disc:${makemkvIndex})`, {
+  const modeLabel = extractionMode === 'smart_extract' ? 'Smart Extract' : 'Full Backup';
+  logger.info('start-backup', `Starting parallel backup for ${discName} (disc:${makemkvIndex}) [${modeLabel}]`, {
     driveId,
     makemkvIndex,
     discSize,
     driveLetter,
+    extractionMode,
     totalRunning: runningBackups.size
   });
 
@@ -131,11 +133,11 @@ export async function startBackup(driveId, makemkvIndex, discName, discSize, dri
   const makemkv = new MakeMKVAdapter();
   await makemkv.loadSettings();
 
-  // Track this backup (include fingerprint and driveLetter for eject)
-  runningBackups.set(driveId, { makemkv, discName, fingerprint, driveLetter });
+  // Track this backup (include fingerprint, driveLetter for eject, and extractionMode)
+  runningBackups.set(driveId, { makemkv, discName, fingerprint, driveLetter, extractionMode });
 
   // Run backup in background (don't await - let it run parallel)
-  runBackup(driveId, makemkv, makemkvIndex, discName, discSize, fingerprint, driveLetter, exportWatcher);
+  runBackup(driveId, makemkv, makemkvIndex, discName, discSize, fingerprint, driveLetter, exportWatcher, extractionMode);
 
   // Return immediately - progress comes via IPC events
   return { success: true, driveId, started: true, fingerprint };
@@ -145,7 +147,7 @@ export async function startBackup(driveId, makemkvIndex, discName, discSize, dri
  * Run a single backup (called in parallel for each drive)
  * Private function - manages the entire backup lifecycle
  */
-async function runBackup(driveId, makemkv, makemkvIndex, discName, discSize, fingerprint, driveLetter, exportWatcher) {
+async function runBackup(driveId, makemkv, makemkvIndex, discName, discSize, fingerprint, driveLetter, exportWatcher, extractionMode = 'full_backup') {
   const mainWindow = getMainWindow();
 
   try {
@@ -170,7 +172,9 @@ async function runBackup(driveId, makemkv, makemkvIndex, discName, discSize, fin
         if (mainWindow) {
           mainWindow.webContents.send('backup-log', { driveId, line: logLine });
         }
-      }
+      },
+      // Extraction mode
+      extractionMode
     );
 
     logger.info('start-backup', `Backup completed for ${discName}`, {
@@ -210,16 +214,19 @@ async function runBackup(driveId, makemkv, makemkvIndex, discName, discSize, fin
             filesFailed: result.filesFailed || 0,
             percentRecovered: result.percentRecovered || 0,
             recoveryAttempted: true,
-            completedAt: new Date().toISOString()
+            completedAt: new Date().toISOString(),
+            extractionMode: extractionMode || 'full_backup'
           };
           logger.warn('start-backup', `Partial backup metadata stored for ${discName}`, {
             filesFailed: result.filesFailed,
-            percentRecovered: result.percentRecovered
+            percentRecovered: result.percentRecovered,
+            extractionMode
           });
         } else {
           metadata.backup = {
             partialSuccess: false,
-            completedAt: new Date().toISOString()
+            completedAt: new Date().toISOString(),
+            extractionMode: extractionMode || 'full_backup'
           };
         }
 

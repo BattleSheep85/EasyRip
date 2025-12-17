@@ -174,9 +174,9 @@ function setupBackupHandlers() {
   });
 
   // Start backup for a specific drive (PARALLEL)
-  ipcMain.handle('start-backup', async (event, driveId, makemkvIndex, discName, discSize, driveLetter) => {
+  ipcMain.handle('start-backup', async (event, driveId, makemkvIndex, discName, discSize, driveLetter, extractionMode = 'full_backup') => {
     const exportWatcher = getExportWatcherInstance();
-    return await startBackupManager(driveId, makemkvIndex, discName, discSize, driveLetter, exportWatcher);
+    return await startBackupManager(driveId, makemkvIndex, discName, discSize, driveLetter, exportWatcher, extractionMode);
   });
 
   // Cancel backup for a specific drive
@@ -436,6 +436,50 @@ function setupPerformanceHandlers() {
       return { success: true, presets };
     } catch (error) {
       logger.error('performance', 'Failed to get performance presets', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Save extraction settings
+  ipcMain.handle('save-extraction-settings', async (event, extraction) => {
+    try {
+      const makemkv = await getSharedMakeMKV();
+      const settings = await makemkv.getSettings();
+
+      // Validate extraction settings structure
+      if (!extraction || typeof extraction !== 'object') {
+        throw new Error('Invalid extraction settings object');
+      }
+
+      // Validate defaultMode
+      const validModes = ['full_backup', 'smart_extract'];
+      if (extraction.defaultMode && !validModes.includes(extraction.defaultMode)) {
+        throw new Error(`Invalid extraction mode: ${extraction.defaultMode}`);
+      }
+
+      // Validate minTitleLength (1-120 minutes)
+      if (extraction.minTitleLength !== undefined) {
+        const length = parseInt(extraction.minTitleLength);
+        if (isNaN(length) || length < 1 || length > 120) {
+          throw new Error(`minTitleLength must be between 1 and 120 minutes (got ${extraction.minTitleLength})`);
+        }
+        extraction.minTitleLength = length;
+      }
+
+      // Update and save
+      await makemkv.saveSettings({
+        ...settings,
+        extraction
+      });
+
+      logger.info('extraction', 'Extraction settings saved', {
+        defaultMode: extraction.defaultMode,
+        minTitleLength: extraction.minTitleLength
+      });
+
+      return { success: true };
+    } catch (error) {
+      logger.error('extraction', 'Failed to save extraction settings', error);
       return { success: false, error: error.message };
     }
   });

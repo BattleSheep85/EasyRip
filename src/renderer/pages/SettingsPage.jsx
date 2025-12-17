@@ -11,6 +11,7 @@ import GeneralSettings from '../components/settings/GeneralSettings.jsx';
 import PathSettings from '../components/settings/PathSettings.jsx';
 import TransferSettings from '../components/settings/TransferSettings.jsx';
 import PerformanceSettings from '../components/settings/PerformanceSettings.jsx';
+import ExtractionSettings from '../components/settings/ExtractionSettings.jsx';
 import AppearanceSettings from '../components/settings/AppearanceSettings.jsx';
 import AboutSettings from '../components/settings/AboutSettings.jsx';
 
@@ -19,6 +20,7 @@ const TABS = [
   { id: 'paths', label: 'Paths', icon: '\uD83D\uDCC1' },
   { id: 'transfer', label: 'Transfer', icon: '\uD83D\uDCE4' },
   { id: 'performance', label: 'Performance', icon: '\u26A1' },
+  { id: 'extraction', label: 'Extraction', icon: '\uD83D\uDCBF' },
   { id: 'appearance', label: 'Appearance', icon: '\uD83C\uDFA8' },
   { id: 'about', label: 'About', icon: '\u2139' },
 ];
@@ -94,6 +96,8 @@ function SettingsPage() {
         return <TransferSettings />;
       case 'performance':
         return <PerformanceSettings />;
+      case 'extraction':
+        return <ExtractionSettings />;
       case 'appearance':
         return <AppearanceSettings />;
       case 'about':

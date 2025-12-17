@@ -22,7 +22,9 @@
     "test:ipc": "node --test tests/ipc-handlers.test.js",
     "test:unit": "node --test tests/utils.test.js tests/makemkv.test.js tests/drives.test.js tests/logger.test.js tests/settings.test.js tests/ipc-handlers.test.js",
     "test:e2e": "node --test tests/gui.test.js",
-    "test:gui:debug": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development electron . --remote-debugging-port=9222\""
+    "test:gui:debug": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development electron . --remote-debugging-port=9222\"",
+    "test:electron": "concurrently --kill-others --success first \"npm run dev\" \"wait-on http://localhost:5173 && npx playwright test --config=playwright.electron.config.js\"",
+    "test:electron:headed": "concurrently --kill-others --success first \"npm run dev\" \"wait-on http://localhost:5173 && npx playwright test --config=playwright.electron.config.js --headed\""
   },
   "keywords": [
     "makemkv",
@@ -34,11 +36,13 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
+    "@playwright/test": "^1.57.0",
     "@vitejs/plugin-react": "^4.2.1",
     "concurrently": "^8.2.2",
     "cross-env": "^10.1.0",
     "electron": "^28.1.0",
     "electron-builder": "^24.9.1",
+    "electron-playwright-helpers": "^1.8.2",
     "playwright": "^1.57.0",
     "png-to-ico": "^3.0.1",
     "sharp": "^0.34.5",

@@ -340,10 +340,11 @@ export function DriveProvider({ children }) {
   }, []);
 
   // Start backup
-  const startBackup = useCallback(async (drive) => {
+  const startBackup = useCallback(async (drive, extractionMode = 'full_backup') => {
     if (!window.electronAPI) return;
 
     const discName = sanitizeDiscName(drive.discName);
+    const modeLabel = extractionMode === 'smart_extract' ? 'Smart Extract' : 'Full Backup';
 
     setDriveStates(prev => ({
       ...prev,
@@ -352,13 +353,13 @@ export function DriveProvider({ children }) {
 
     setDriveLogs(prev => ({
       ...prev,
-      [drive.id]: [`Starting backup: ${drive.discName}`, `Disc size: ${formatSize(drive.discSize)}`]
+      [drive.id]: [`Starting backup: ${drive.discName}`, `Disc size: ${formatSize(drive.discSize)}`, `Extraction mode: ${modeLabel}`]
     }));
 
     setActiveLogTab(drive.id);
 
     try {
-      const result = await window.electronAPI.startBackup(drive.id, drive.makemkvIndex, discName, drive.discSize || 0, drive.driveLetter);
+      const result = await window.electronAPI.startBackup(drive.id, drive.makemkvIndex, discName, drive.discSize || 0, drive.driveLetter, extractionMode);
 
       if (result.success) {
         if (result.alreadyExists) {

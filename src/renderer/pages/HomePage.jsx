@@ -7,6 +7,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { formatSize } from '../../shared/utils.js';
 import { useAutomation } from '../context/AutomationContext.jsx';
 import { useDrives } from '../context/DriveContext.jsx';
+import { useSettings } from '../context/SettingsContext.jsx';
 
 function HomePage() {
   const { automation, toggleAutomation } = useAutomation();
@@ -24,11 +25,29 @@ function HomePage() {
     redoBackup,
     clearError,
   } = useDrives();
+  const { settings } = useSettings();
 
   const logEndRef = useRef(null);
 
   // Confirmation dialog state for Re-Do
   const [confirmRedo, setConfirmRedo] = useState(null);
+
+  // Per-disc extraction mode override (default = use global setting)
+  const [driveExtractModes, setDriveExtractModes] = useState({});
+
+  // Get effective extraction mode for a drive (per-disc override or global default)
+  const getEffectiveExtractionMode = (driveId) => {
+    const override = driveExtractModes[driveId];
+    if (override && override !== 'default') {
+      return override;
+    }
+    return settings?.extraction?.defaultMode || 'full_backup';
+  };
+
+  // Handle extraction mode change for a drive
+  const handleExtractModeChange = (driveId, mode) => {
+    setDriveExtractModes(prev => ({ ...prev, [driveId]: mode }));
+  };
 
   // Auto-scroll logs
   useEffect(() => {
@@ -61,7 +80,8 @@ function HomePage() {
     });
 
     eligibleDrives.forEach(drive => {
-      startBackup(drive);
+      const extractionMode = getEffectiveExtractionMode(drive.id);
+      startBackup(drive, extractionMode);
     });
   }
 
@@ -205,6 +225,7 @@ function HomePage() {
                   <th>Backup</th>
                   <th>Status</th>
                   <th>Progress</th>
+                  <th>Mode</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -261,6 +282,21 @@ function HomePage() {
                           </span>
                         </div>
                       </td>
+                      <td className="mode-cell">
+                        <select
+                          value={driveExtractModes[drive.id] || 'default'}
+                          onChange={(e) => handleExtractModeChange(drive.id, e.target.value)}
+                          disabled={state.status === 'running' || state.status === 'queued'}
+                          className="mode-select"
+                          title={`Extraction mode: ${getEffectiveExtractionMode(drive.id) === 'smart_extract' ? 'Smart Extract (skip short titles)' : 'Full Backup (all titles)'}`}
+                        >
+                          <option value="default">
+                            Default ({settings?.extraction?.defaultMode === 'smart_extract' ? 'Smart' : 'Full'})
+                          </option>
+                          <option value="full_backup">Full Backup</option>
+                          <option value="smart_extract">Smart Extract</option>
+                        </select>
+                      </td>
                       <td className="action-cell">
                         {state.status === 'running' ? (
                           <button
@@ -287,7 +323,7 @@ function HomePage() {
                           </button>
                         ) : state.status === 'incomplete' ? (
                           <button
-                            onClick={() => startBackup(drive)}
+                            onClick={() => startBackup(drive, getEffectiveExtractionMode(drive.id))}
                             className="btn btn-sm btn-warning"
                             title="Incomplete backup - will delete and restart"
                           >
@@ -295,7 +331,7 @@ function HomePage() {
                           </button>
                         ) : (
                           <button
-                            onClick={() => startBackup(drive)}
+                            onClick={() => startBackup(drive, getEffectiveExtractionMode(drive.id))}
                             disabled={state.status === 'running'}
                             className="btn btn-sm btn-primary"
                           >

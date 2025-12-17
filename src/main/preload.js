@@ -26,8 +26,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Start backup for a specific drive (PARALLEL - each drive runs concurrently)
   // makemkvIndex is the MakeMKV disc:N index from drive detection
   // driveLetter is needed for fingerprinting before MakeMKV runs
-  startBackup: (driveId, makemkvIndex, discName, discSize, driveLetter) =>
-    ipcRenderer.invoke('start-backup', driveId, makemkvIndex, discName, discSize, driveLetter),
+  // extractionMode: 'full_backup' or 'smart_extract' (skip titles under minTitleLength)
+  startBackup: (driveId, makemkvIndex, discName, discSize, driveLetter, extractionMode = 'full_backup') =>
+    ipcRenderer.invoke('start-backup', driveId, makemkvIndex, discName, discSize, driveLetter, extractionMode),
 
   // Delete existing backup and restart fresh (Re-Do functionality)
   deleteAndRestartBackup: (driveId, makemkvIndex, discName, discSize, driveLetter) =>
@@ -52,6 +53,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getMakeMKVPerformance: () => ipcRenderer.invoke('get-makemkv-performance'),
   saveMakeMKVPerformance: (performance) => ipcRenderer.invoke('save-makemkv-performance', performance),
   getPerformancePresets: () => ipcRenderer.invoke('get-performance-presets'),
+
+  // Extraction Settings (Smart Extract mode)
+  saveExtractionSettings: (extraction) => ipcRenderer.invoke('save-extraction-settings', extraction),
 
   // Logging and troubleshooting
   getLogs: (lines = 200) => ipcRenderer.invoke('get-logs', lines),

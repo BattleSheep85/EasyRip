@@ -48,6 +48,21 @@ coverage/
 .nyc_output/
 test-results/
 playwright-report/
+playwright-report-electron/
+tests/screenshots/
+
+# Test configuration files (dev only)
+playwright.electron.config.js
+configure-export.js
+test-export-ready.js
+tests/electron/
+
+# Temporary documentation/audit files
+CONTRAST_*.md
+EXECUTIVE_SUMMARY.md
+README_CONTRAST_AUDIT.md
+VERIFICATION_CHECKLIST.md
+CHANGES.md
 
 # Temporary
 tmp/
