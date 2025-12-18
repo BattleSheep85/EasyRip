@@ -10,6 +10,7 @@ import path from 'path';
 import https from 'https';
 import http from 'http';
 import logger from '../logger.js';
+import { extractJSON, normalizeIdentificationResult } from './providers/json-parser.js';
 
 // Create a simple log wrapper with category
 const log = {
@@ -543,7 +544,7 @@ export class OllamaManager {
           format: 'json',
           options: {
             temperature: 0.3, // Lower for more deterministic output
-            num_predict: 500  // Limit response length
+            num_predict: 1000 // Allow longer responses for reasoning models
           }
         }),
         signal: controller.signal
@@ -689,53 +690,24 @@ Important: Respond with ONLY the JSON object, no other text.`;
 
   /**
    * Parse the LLM identification response
+   * Uses robust JSON parser to handle various LLM output formats
    * @param {string} response - Raw response string
    * @returns {Object} Parsed identification result
    */
   _parseIdentificationResponse(response) {
-    try {
-      // Try to parse as JSON directly
-      const parsed = JSON.parse(response);
-      return {
-        title: parsed.title || null,
-        year: parsed.year || null,
-        type: parsed.type || 'movie',
-        confidence: Math.min(1, Math.max(0, parsed.confidence || 0.5)),
-        reasoning: parsed.reasoning || '',
-        tvInfo: parsed.tvInfo || null,
-        hasMultipleVersions: parsed.hasMultipleVersions || false
-      };
-    } catch {
-      // Try to extract JSON from response
-      const jsonMatch = response.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        try {
-          const parsed = JSON.parse(jsonMatch[0]);
-          return {
-            title: parsed.title || null,
-            year: parsed.year || null,
-            type: parsed.type || 'movie',
-            confidence: Math.min(1, Math.max(0, parsed.confidence || 0.5)),
-            reasoning: parsed.reasoning || '',
-            tvInfo: parsed.tvInfo || null,
-            hasMultipleVersions: parsed.hasMultipleVersions || false
-          };
-        } catch {
-          log.warn('Failed to parse extracted JSON');
-        }
-      }
+    log.debug('Parsing LLM response', { length: response?.length });
 
-      // Return a default failed result
-      return {
-        title: null,
-        year: null,
-        type: 'movie',
-        confidence: 0,
-        reasoning: 'Failed to parse LLM response',
-        tvInfo: null,
-        hasMultipleVersions: false
-      };
+    // Use the robust JSON parser
+    const parsed = extractJSON(response);
+
+    if (!parsed) {
+      log.warn('Failed to extract JSON from response', {
+        preview: response?.substring(0, 300)
+      });
     }
+
+    // Normalize the result with defaults
+    return normalizeIdentificationResult(parsed);
   }
 
   /**

@@ -339,6 +339,31 @@ export function DriveProvider({ children }) {
     });
   }, []);
 
+  // Refresh single drive status
+  const refreshDrive = useCallback(async (driveId) => {
+    if (!window.electronAPI) return;
+
+    // Find the drive
+    const drive = drives.find(d => d.id === driveId);
+    if (!drive) return;
+
+    // Don't refresh if backup is running
+    const currentState = driveStates[driveId];
+    if (currentState?.status === 'running' || currentState?.status === 'queued') {
+      return;
+    }
+
+    const discName = sanitizeDiscName(drive.discName);
+    try {
+      const statusResult = await window.electronAPI.checkBackupStatus(discName, drive.discSize || 0);
+      if (statusResult.success) {
+        updateDriveStatus(driveId, statusResult);
+      }
+    } catch (err) {
+      console.error(`Failed to refresh drive ${driveId}:`, err);
+    }
+  }, [drives, driveStates, updateDriveStatus]);
+
   // Start backup
   const startBackup = useCallback(async (drive, extractionMode = 'full_backup') => {
     if (!window.electronAPI) return;
@@ -465,6 +490,7 @@ export function DriveProvider({ children }) {
     startBackup,
     cancelBackup,
     redoBackup,
+    refreshDrive,
     clearError,
   };
 

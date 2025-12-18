@@ -3,7 +3,7 @@
  * Uses DriveContext for persistent state across navigation
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { formatSize } from '../../shared/utils.js';
 import { useAutomation } from '../context/AutomationContext.jsx';
 import { useDrives } from '../context/DriveContext.jsx';
@@ -15,14 +15,13 @@ function HomePage() {
     drives,
     driveStates,
     driveLogs,
-    isScanning,
     error,
     activeLogTab,
     setActiveLogTab,
-    scanDrives,
     startBackup,
     cancelBackup,
     redoBackup,
+    refreshDrive,
     clearError,
   } = useDrives();
   const { settings } = useSettings();
@@ -34,6 +33,32 @@ function HomePage() {
 
   // Per-disc extraction mode override (default = use global setting)
   const [driveExtractModes, setDriveExtractModes] = useState({});
+
+  // Resizable log panel
+  const [logPanelHeight, setLogPanelHeight] = useState(120);
+  const isDragging = useRef(false);
+
+  const handleDragStart = useCallback((e) => {
+    e.preventDefault();
+    isDragging.current = true;
+    document.addEventListener('mousemove', handleDrag);
+    document.addEventListener('mouseup', handleDragEnd);
+  }, []);
+
+  const handleDrag = useCallback((e) => {
+    if (!isDragging.current) return;
+    const container = document.querySelector('.home-page');
+    if (!container) return;
+    const containerRect = container.getBoundingClientRect();
+    const newHeight = containerRect.bottom - e.clientY;
+    setLogPanelHeight(Math.max(80, Math.min(400, newHeight)));
+  }, []);
+
+  const handleDragEnd = useCallback(() => {
+    isDragging.current = false;
+    document.removeEventListener('mousemove', handleDrag);
+    document.removeEventListener('mouseup', handleDragEnd);
+  }, [handleDrag]);
 
   // Get effective extraction mode for a drive (per-disc override or global default)
   const getEffectiveExtractionMode = (driveId) => {
@@ -72,19 +97,6 @@ function HomePage() {
     redoBackup(drive);
   }
 
-  // Backup all eligible drives
-  function handleBackupAll() {
-    const eligibleDrives = drives.filter(d => {
-      const state = driveStates[d.id];
-      return !state || state.status === 'idle' || state.status === 'error' || state.status === 'incomplete';
-    });
-
-    eligibleDrives.forEach(drive => {
-      const extractionMode = getEffectiveExtractionMode(drive.id);
-      startBackup(drive, extractionMode);
-    });
-  }
-
   // Status helpers
   function getStatusClass(status) {
     switch (status) {
@@ -114,10 +126,6 @@ function HomePage() {
   const runningCount = drives.filter(d => driveStates[d.id]?.status === 'running').length;
   const queuedCount = drives.filter(d => driveStates[d.id]?.status === 'queued').length;
   const completeCount = drives.filter(d => ['complete', 'exists'].includes(driveStates[d.id]?.status)).length;
-  const readyCount = drives.filter(d => {
-    const status = driveStates[d.id]?.status;
-    return !status || status === 'idle' || status === 'error' || status === 'incomplete';
-  }).length;
 
   return (
     <div className="page home-page">
@@ -131,33 +139,8 @@ function HomePage() {
 
       {/* Toolbar */}
       <div className="toolbar">
-        <button
-          onClick={scanDrives}
-          disabled={isScanning}
-          className="btn btn-primary"
-        >
-          {isScanning ? (
-            <>
-              <span className="spinner spinner-sm spinner-white"></span>
-              Scanning...
-            </>
-          ) : (
-            'Refresh Drives'
-          )}
-        </button>
-
-        <button
-          onClick={handleBackupAll}
-          disabled={readyCount === 0 || runningCount > 0}
-          className="btn btn-success"
-        >
-          Backup All ({readyCount})
-        </button>
-
-        <div className="toolbar-separator"></div>
-
         <span className="toolbar-info">
-          {drives.length} disc(s) | {runningCount} running | {queuedCount > 0 ? `${queuedCount} queued | ` : ''}{completeCount} done | {readyCount} ready
+          {drives.length} disc(s) | {runningCount} running | {queuedCount > 0 ? `${queuedCount} queued | ` : ''}{completeCount} done
         </span>
 
         <div className="toolbar-separator"></div>
@@ -212,7 +195,7 @@ function HomePage() {
         <div className="drive-table-container">
           {drives.length === 0 ? (
             <div className="no-drives">
-              {isScanning ? 'Scanning for drives...' : 'No discs found. Insert a disc and click Refresh.'}
+              No discs found. Insert a disc to begin.
             </div>
           ) : (
             <table className="drive-table">
@@ -298,46 +281,56 @@ function HomePage() {
                         </select>
                       </td>
                       <td className="action-cell">
-                        {state.status === 'running' ? (
+                        <div className="action-buttons">
                           <button
-                            onClick={() => cancelBackup(drive.id)}
-                            className="btn btn-sm btn-danger"
+                            onClick={() => refreshDrive(drive.id)}
+                            disabled={state.status === 'running' || state.status === 'queued'}
+                            className="btn btn-xs btn-icon"
+                            title="Refresh drive status"
                           >
-                            Cancel
+                            &#x21bb;
                           </button>
-                        ) : state.status === 'queued' ? (
-                          <button
-                            onClick={() => cancelBackup(drive.id)}
-                            className="btn btn-sm btn-warning"
-                            title={`Queued at position #${state.queuePosition}`}
-                          >
-                            Dequeue
-                          </button>
-                        ) : state.status === 'exists' ? (
-                          <button
-                            onClick={() => handleRedoClick(drive)}
-                            className="btn btn-sm btn-warning"
-                            title="Delete existing backup and re-backup from disc"
-                          >
-                            Re-do
-                          </button>
-                        ) : state.status === 'incomplete' ? (
-                          <button
-                            onClick={() => startBackup(drive, getEffectiveExtractionMode(drive.id))}
-                            className="btn btn-sm btn-warning"
-                            title="Incomplete backup - will delete and restart"
-                          >
-                            Retry
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => startBackup(drive, getEffectiveExtractionMode(drive.id))}
-                            disabled={state.status === 'running'}
-                            className="btn btn-sm btn-primary"
-                          >
-                            Backup
-                          </button>
-                        )}
+                          {state.status === 'running' ? (
+                            <button
+                              onClick={() => cancelBackup(drive.id)}
+                              className="btn btn-sm btn-danger"
+                            >
+                              Cancel
+                            </button>
+                          ) : state.status === 'queued' ? (
+                            <button
+                              onClick={() => cancelBackup(drive.id)}
+                              className="btn btn-sm btn-warning"
+                              title={`Queued at position #${state.queuePosition}`}
+                            >
+                              Dequeue
+                            </button>
+                          ) : state.status === 'exists' ? (
+                            <button
+                              onClick={() => handleRedoClick(drive)}
+                              className="btn btn-sm btn-warning"
+                              title="Delete existing backup and re-backup from disc"
+                            >
+                              Re-do
+                            </button>
+                          ) : state.status === 'incomplete' ? (
+                            <button
+                              onClick={() => startBackup(drive, getEffectiveExtractionMode(drive.id))}
+                              className="btn btn-sm btn-warning"
+                              title="Incomplete backup - will delete and restart"
+                            >
+                              Retry
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => startBackup(drive, getEffectiveExtractionMode(drive.id))}
+                              disabled={state.status === 'running'}
+                              className="btn btn-sm btn-primary"
+                            >
+                              Backup
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -349,7 +342,10 @@ function HomePage() {
       </div>
 
       {/* Log Panel */}
-      <div className="log-panel">
+      <div className="log-panel" style={{ height: logPanelHeight }}>
+        <div className="log-resize-handle" onMouseDown={handleDragStart}>
+          <div className="resize-grip"></div>
+        </div>
         <div className="log-tabs">
           {drives.map(drive => {
             const state = driveStates[drive.id] || { status: 'idle' };

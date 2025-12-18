@@ -74,6 +74,13 @@ export class MakeMKVAdapter {
     this.automation = { autoBackup: false, autoMeta: true, autoExport: false, liveDangerously: false, ejectAfterBackup: false }; // Automation toggles
     this.makemkvPerformance = null; // Performance settings (presets + custom overrides)
     this.extraction = { defaultMode: 'full_backup', minTitleLength: 10 }; // Extraction mode settings
+    // AI Provider settings
+    this.aiProviders = {
+      activeProvider: 'ollama',
+      ollama: { enabled: true, baseUrl: 'http://127.0.0.1:11434', model: 'hermes3:8b' },
+      openrouter: { enabled: false, model: 'anthropic/claude-3.5-haiku' },
+      claude: { enabled: false, model: 'claude-haiku-4-5-20251001' }
+    };
     // Settings cache for performance optimization
     this.settingsCache = null;
     this.settingsCacheTime = 0;
@@ -94,6 +101,7 @@ export class MakeMKVAdapter {
       this.automation = settings.automation || { autoBackup: false, autoMeta: true, autoExport: false, liveDangerously: false, ejectAfterBackup: false };
       this.makemkvPerformance = settings.makemkvPerformance || this.getDefaultPerformanceSettings();
       this.extraction = settings.extraction || { defaultMode: 'full_backup', minTitleLength: 10 };
+      this.aiProviders = settings.aiProviders || this.aiProviders;
     } catch {
       // Settings file doesn't exist yet, use defaults
       this.basePath = 'D:\\EasyRip';
@@ -103,6 +111,7 @@ export class MakeMKVAdapter {
       this.automation = { autoBackup: false, autoMeta: true, autoExport: false, liveDangerously: false, ejectAfterBackup: false };
       this.makemkvPerformance = this.getDefaultPerformanceSettings();
       this.extraction = { defaultMode: 'full_backup', minTitleLength: 10 };
+      // aiProviders keeps its default from constructor
     }
     this._settingsLoaded = true;
   }
@@ -124,6 +133,7 @@ export class MakeMKVAdapter {
       this.automation = settings.automation || { autoBackup: false, autoMeta: true, autoExport: false, liveDangerously: false, ejectAfterBackup: false };
       this.makemkvPerformance = settings.makemkvPerformance || this.getDefaultPerformanceSettings();
       this.extraction = settings.extraction || { defaultMode: 'full_backup', minTitleLength: 10 };
+      this.aiProviders = settings.aiProviders || this.aiProviders;
     } catch {
       // If file read fails, keep existing cached values
     }
@@ -138,6 +148,7 @@ export class MakeMKVAdapter {
       automation: this.automation,
       makemkvPerformance: this.makemkvPerformance,
       extraction: this.extraction,
+      aiProviders: this.aiProviders,
     };
 
     this.settingsCache = settingsObject;
@@ -156,6 +167,7 @@ export class MakeMKVAdapter {
     this.automation = settings.automation || { autoBackup: false, autoMeta: true, autoExport: false, liveDangerously: false, ejectAfterBackup: false };
     this.makemkvPerformance = settings.makemkvPerformance || this.getDefaultPerformanceSettings();
     this.extraction = settings.extraction || { defaultMode: 'full_backup', minTitleLength: 10 };
+    this.aiProviders = settings.aiProviders || this.aiProviders;
 
     await fs.writeFile(
       this.settingsPath,
@@ -173,6 +185,7 @@ export class MakeMKVAdapter {
       automation: this.automation,
       makemkvPerformance: this.makemkvPerformance,
       extraction: this.extraction,
+      aiProviders: this.aiProviders,
     };
     this.settingsCacheTime = Date.now();
 

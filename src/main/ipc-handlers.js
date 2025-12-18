@@ -46,6 +46,7 @@ export function setupIPC() {
   setupAutomationHandlers();
   setupLibraryFixerHandlers();
   setupCredentialHandlers();
+  setupAIProviderHandlers();
 }
 
 /**
@@ -1349,7 +1350,10 @@ function setupLibraryFixerHandlers() {
  */
 function setupCredentialHandlers() {
   // Security: Whitelist of allowed credential keys
-  const ALLOWED_CREDENTIAL_KEYS = ['sftp-password', 'sftp-privatekey', 'ftp-password'];
+  const ALLOWED_CREDENTIAL_KEYS = [
+    'sftp-password', 'sftp-privatekey', 'ftp-password',
+    'openrouter-api-key', 'claude-api-key', 'claude-oauth-token'
+  ];
 
   // Validate credential key against whitelist
   function validateCredentialKey(key) {
@@ -1413,6 +1417,207 @@ function setupCredentialHandlers() {
       };
     } catch (error) {
       return { success: false, available: false, error: error.message };
+    }
+  });
+}
+
+/**
+ * AI Provider handlers
+ */
+function setupAIProviderHandlers() {
+  // Get all provider info
+  ipcMain.handle('get-ai-providers', async () => {
+    try {
+      const { getProviderManager } = await import('./metadata/providers/provider-manager.js');
+      const manager = getProviderManager();
+      return {
+        success: true,
+        providers: manager.getAllProviderInfo(),
+        activeProvider: manager.getActiveProviderName()
+      };
+    } catch (error) {
+      logger.error('ai-providers', 'Failed to get providers', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Get models for a specific provider
+  ipcMain.handle('get-ai-provider-models', async (event, providerName) => {
+    try {
+      const { getProviderManager } = await import('./metadata/providers/provider-manager.js');
+      const manager = getProviderManager();
+      return {
+        success: true,
+        models: manager.getModels(providerName)
+      };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Set active provider with configuration
+  ipcMain.handle('set-ai-provider', async (event, providerName, config) => {
+    try {
+      const { getProviderManager } = await import('./metadata/providers/provider-manager.js');
+      const manager = getProviderManager();
+      manager.setActiveProvider(providerName, config);
+      return { success: true };
+    } catch (error) {
+      logger.error('ai-providers', 'Failed to set provider', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Configure a provider (without setting it active)
+  ipcMain.handle('configure-ai-provider', async (event, providerName, config) => {
+    try {
+      const { getProviderManager } = await import('./metadata/providers/provider-manager.js');
+      const manager = getProviderManager();
+      manager.configureProvider(providerName, config);
+      return { success: true };
+    } catch (error) {
+      logger.error('ai-providers', 'Failed to configure provider', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Test a provider connection
+  ipcMain.handle('test-ai-provider', async (event, providerName) => {
+    try {
+      const { getProviderManager } = await import('./metadata/providers/provider-manager.js');
+      const manager = getProviderManager();
+      const result = await manager.testProvider(providerName);
+      return { success: true, ...result };
+    } catch (error) {
+      return { success: false, message: error.message };
+    }
+  });
+
+  // Initialize provider from settings
+  ipcMain.handle('init-ai-provider-from-settings', async () => {
+    try {
+      const { getProviderManager } = await import('./metadata/providers/provider-manager.js');
+      const { getCredentialStore } = await import('./credential-store.js');
+      const manager = getProviderManager();
+      const credStore = getCredentialStore();
+
+      // Load settings
+      const settings = await makemkv.getSettings();
+      const aiSettings = settings.aiProviders || {};
+
+      // Configure each provider
+      if (aiSettings.ollama) {
+        manager.configureProvider('ollama', aiSettings.ollama);
+      }
+
+      if (aiSettings.openrouter) {
+        const apiKey = await credStore.getCredential('openrouter-api-key');
+        manager.configureProvider('openrouter', {
+          ...aiSettings.openrouter,
+          apiKey
+        });
+      }
+
+      if (aiSettings.claude) {
+        const apiKey = await credStore.getCredential('claude-api-key');
+        const oauthToken = await credStore.getCredential('claude-oauth-token');
+        manager.configureProvider('claude', {
+          ...aiSettings.claude,
+          apiKey,
+          oauthToken
+        });
+      }
+
+      // Set active provider
+      if (aiSettings.activeProvider) {
+        manager.setActiveProvider(aiSettings.activeProvider, aiSettings[aiSettings.activeProvider] || {});
+      }
+
+      logger.info('ai-providers', 'Initialized from settings', { active: aiSettings.activeProvider });
+      return { success: true, activeProvider: manager.getActiveProviderName() };
+    } catch (error) {
+      logger.error('ai-providers', 'Failed to initialize from settings', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Get Ollama models with installation status
+  ipcMain.handle('get-ollama-models-status', async () => {
+    try {
+      const { getProviderManager } = await import('./metadata/providers/provider-manager.js');
+      const manager = getProviderManager();
+      const ollamaProvider = manager.providers.get('ollama');
+
+      if (!ollamaProvider) {
+        return { success: false, error: 'Ollama provider not initialized' };
+      }
+
+      const models = await ollamaProvider.getModelsWithStatus();
+      const ollamaAvailable = await ollamaProvider.isAvailable();
+
+      return {
+        success: true,
+        ollamaAvailable,
+        models
+      };
+    } catch (error) {
+      logger.error('ai-providers', 'Failed to get Ollama models status', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Pull/download an Ollama model
+  ipcMain.handle('pull-ollama-model', async (event, modelId) => {
+    try {
+      const { getProviderManager } = await import('./metadata/providers/provider-manager.js');
+      const manager = getProviderManager();
+      const ollamaProvider = manager.providers.get('ollama');
+
+      if (!ollamaProvider) {
+        return { success: false, error: 'Ollama provider not initialized' };
+      }
+
+      const mainWindow = getMainWindow();
+
+      // Progress callback sends updates to renderer
+      const onProgress = (percent, status) => {
+        if (mainWindow) {
+          mainWindow.webContents.send('ollama-model-pull-progress', {
+            modelId,
+            percent,
+            status
+          });
+        }
+      };
+
+      logger.info('ai-providers', `Starting pull for model: ${modelId}`);
+      const result = await ollamaProvider.pullModel(modelId, onProgress);
+
+      return result;
+    } catch (error) {
+      logger.error('ai-providers', `Failed to pull model ${modelId}`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Delete an Ollama model
+  ipcMain.handle('delete-ollama-model', async (event, modelId) => {
+    try {
+      const { getProviderManager } = await import('./metadata/providers/provider-manager.js');
+      const manager = getProviderManager();
+      const ollamaProvider = manager.providers.get('ollama');
+
+      if (!ollamaProvider) {
+        return { success: false, error: 'Ollama provider not initialized' };
+      }
+
+      logger.info('ai-providers', `Deleting model: ${modelId}`);
+      const result = await ollamaProvider.deleteModel(modelId);
+
+      return result;
+    } catch (error) {
+      logger.error('ai-providers', `Failed to delete model ${modelId}`, error);
+      return { success: false, error: error.message };
     }
   });
 }

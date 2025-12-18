@@ -352,6 +352,47 @@ contextBridge.exposeInMainWorld('electronAPI', {
   credentialCheckAvailable: () => ipcRenderer.invoke('credential-check-available'),
 
   // ============================================
+  // AI PROVIDER APIs
+  // ============================================
+
+  // Get all AI providers and their status
+  getAIProviders: () => ipcRenderer.invoke('get-ai-providers'),
+
+  // Get available models for a provider
+  getAIProviderModels: (providerName) => ipcRenderer.invoke('get-ai-provider-models', providerName),
+
+  // Set the active AI provider
+  setAIProvider: (providerName, config) => ipcRenderer.invoke('set-ai-provider', providerName, config),
+
+  // Configure a provider (without making it active)
+  configureAIProvider: (providerName, config) => ipcRenderer.invoke('configure-ai-provider', providerName, config),
+
+  // Test an AI provider connection
+  testAIProvider: (providerName) => ipcRenderer.invoke('test-ai-provider', providerName),
+
+  // Initialize AI provider from saved settings
+  initAIProviderFromSettings: () => ipcRenderer.invoke('init-ai-provider-from-settings'),
+
+  // Get Ollama models with installation status
+  getOllamaModelsStatus: () => ipcRenderer.invoke('get-ollama-models-status'),
+
+  // Pull/download an Ollama model
+  pullOllamaModelNew: (modelId) => ipcRenderer.invoke('pull-ollama-model', modelId),
+
+  // Delete an Ollama model
+  deleteOllamaModel: (modelId) => ipcRenderer.invoke('delete-ollama-model', modelId),
+
+  // Listen for Ollama model pull progress
+  onOllamaModelPullProgress: (callback) => {
+    ipcRenderer.on('ollama-model-pull-progress', (event, data) => callback(data));
+  },
+
+  // Remove Ollama model listeners
+  removeOllamaModelListeners: () => {
+    ipcRenderer.removeAllListeners('ollama-model-pull-progress');
+  },
+
+  // ============================================
   // EXTERNAL LINKS
   // ============================================
 

@@ -3,6 +3,8 @@
 import path from 'path';
 import logger from './logger.js';
 import { getOllamaManager } from './metadata/ollama.js';
+import { getProviderManager } from './metadata/providers/provider-manager.js';
+import { getCredentialStore } from './credential-store.js';
 import { getTMDBClient } from './metadata/tmdb.js';
 import { getDiscIdentifier } from './metadata/identifier.js';
 import { getMetadataWatcher, resetMetadataWatcher } from './metadata/watcher.js';
@@ -50,6 +52,9 @@ export async function initializeMetadataSystem(makemkv) {
     } else {
       logger.info('metadata', 'Ollama not installed, will install on first use');
     }
+
+    // Initialize AI provider manager with settings
+    await initializeAIProviders(settings);
 
     // Initialize TMDB client
     tmdbClient = getTMDBClient();
@@ -227,4 +232,62 @@ export function getWatcher() {
  */
 export function getExportWatcherInstance() {
   return exportWatcher;
+}
+
+/**
+ * Initialize AI provider manager from settings
+ * @param {Object} settings - Application settings
+ */
+async function initializeAIProviders(settings) {
+  try {
+    const providerManager = getProviderManager();
+    const aiSettings = settings.aiProviders || {};
+    const credStore = getCredentialStore();
+
+    logger.info('metadata', 'Initializing AI providers...', { active: aiSettings.activeProvider });
+
+    // Configure Ollama provider
+    if (aiSettings.ollama) {
+      providerManager.configureProvider('ollama', aiSettings.ollama);
+    }
+
+    // Configure OpenRouter provider (needs API key from credential store)
+    if (aiSettings.openrouter) {
+      try {
+        const apiKey = await credStore.getCredential('openrouter-api-key');
+        providerManager.configureProvider('openrouter', {
+          ...aiSettings.openrouter,
+          apiKey
+        });
+      } catch (err) {
+        logger.debug('metadata', 'OpenRouter API key not found');
+      }
+    }
+
+    // Configure Claude provider (needs API key from credential store)
+    if (aiSettings.claude) {
+      try {
+        const apiKey = await credStore.getCredential('claude-api-key');
+        const oauthToken = await credStore.getCredential('claude-oauth-token');
+        providerManager.configureProvider('claude', {
+          ...aiSettings.claude,
+          apiKey,
+          oauthToken
+        });
+      } catch (err) {
+        logger.debug('metadata', 'Claude credentials not found');
+      }
+    }
+
+    // Set active provider
+    const activeProvider = aiSettings.activeProvider || 'ollama';
+    providerManager.setActiveProvider(activeProvider, aiSettings[activeProvider] || {});
+
+    logger.info('metadata', `AI provider initialized: ${activeProvider}`);
+  } catch (error) {
+    logger.error('metadata', 'Failed to initialize AI providers', error);
+    // Fall back to Ollama
+    const providerManager = getProviderManager();
+    providerManager.setActiveProvider('ollama', {});
+  }
 }

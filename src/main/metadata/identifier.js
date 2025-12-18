@@ -20,6 +20,7 @@ import {
 import { parseDVDStructure, getMainFeatureDuration as getDVDDuration } from './parser-dvd.js';
 import { parseBlurayStructure, getMainFeatureDuration as getBlurayDuration } from './parser-bluray.js';
 import { getOllamaManager } from './ollama.js';
+import { getProviderManager } from './providers/provider-manager.js';
 import { getTMDBClient } from './tmdb.js';
 import { EpisodeDetector } from './episode-detector.js';
 
@@ -341,6 +342,7 @@ function analyzeTVShowPatterns(volumeLabel) {
 export class DiscIdentifier {
   constructor() {
     this.ollama = getOllamaManager();
+    this.providerManager = getProviderManager();
     this.tmdb = getTMDBClient();
     this.episodeDetector = new EpisodeDetector(this.tmdb);
     this.isProcessing = false;
@@ -836,21 +838,49 @@ export class DiscIdentifier {
         log.info(`Using ARM match as identification: ${armMatch.title}`);
       } else {
         try {
-          const ollamaStatus = await this.ollama.getStatus();
-          if (ollamaStatus.running && ollamaStatus.hasModel) {
-            // Pass enhanced disc info including embedded title hint
-            const discInfo = {
-              disc: {
-                ...metadata.disc,
-                volumeLabel: searchHint // Use enhanced search hint
-              },
-              extracted: metadata.extracted
-            };
-            llmGuess = await this.ollama.identifyDisc(discInfo);
+          // Build disc info with enhanced search hint
+          const discInfo = {
+            disc: {
+              ...metadata.disc,
+              volumeLabel: searchHint // Use enhanced search hint
+            },
+            extracted: metadata.extracted
+          };
+
+          // Try provider manager first (supports multiple AI providers)
+          const activeProviderName = this.providerManager.getActiveProviderName();
+          const activeProvider = this.providerManager.getActiveProvider();
+          const providerAvailable = await activeProvider?.isAvailable();
+
+          if (providerAvailable) {
+            log.info(`Using AI provider: ${activeProviderName}`);
+
+            // For Ollama provider, use the existing optimized identifyDisc method
+            if (activeProviderName === 'ollama') {
+              const ollamaStatus = await this.ollama.getStatus();
+              if (ollamaStatus.running && ollamaStatus.hasModel) {
+                llmGuess = await this.ollama.identifyDisc(discInfo);
+              } else {
+                throw new Error('Ollama model not loaded');
+              }
+            } else {
+              // For other providers (OpenRouter, Claude), build prompt and use provider manager
+              const prompt = this.ollama._buildIdentificationPrompt(discInfo);
+              llmGuess = await this.providerManager.identifyDisc(prompt);
+            }
+
             metadata.llmGuess = createLLMGuess(llmGuess);
             log.info(`LLM guess: ${llmGuess.title} (${llmGuess.confidence * 100}% confidence)`);
           } else {
-            log.warn('Ollama not available, skipping LLM identification');
+            // Fallback to direct Ollama check (for backward compatibility)
+            const ollamaStatus = await this.ollama.getStatus();
+            if (ollamaStatus.running && ollamaStatus.hasModel) {
+              llmGuess = await this.ollama.identifyDisc(discInfo);
+              metadata.llmGuess = createLLMGuess(llmGuess);
+              log.info(`LLM guess: ${llmGuess.title} (${llmGuess.confidence * 100}% confidence)`);
+            } else {
+              log.warn('No AI provider available, skipping LLM identification');
+            }
           }
         } catch (error) {
           log.error('LLM identification failed:', error.message);
