@@ -13,8 +13,6 @@ import logger from './logger.js';
 import { MediaType } from './metadata/schemas.js';
 import {
   writeMovieNfo,
-  writeTvShowNfo,
-  writeEpisodeNfo,
   sanitizeFilename
 } from './nfo.js';
 
@@ -393,52 +391,11 @@ export class EmbyExporter {
       onLog
     );
 
-    // Generate NFO file for Emby identification
-    try {
-      if (onLog) onLog('Generating NFO metadata file...');
+    // Generate NFO file for Emby identification (movies only - TV NFOs cause Emby detection issues)
+    if (mediaType !== MediaType.TV) {
+      try {
+        if (onLog) onLog('Generating NFO metadata file...');
 
-      if (mediaType === MediaType.TV && tvInfo) {
-        // For TV: create tvshow.nfo at series root (if not exists) and episode NFO
-        const tvShowNfoPath = path.join(seriesFolderPath, 'tvshow.nfo');
-        const tvShowNfoExists = await fs.access(tvShowNfoPath).then(() => true).catch(() => false);
-
-        if (!tvShowNfoExists && metadata.tmdb) {
-          // Create tvshow.nfo with series metadata
-          await writeTvShowNfo(seriesFolderPath, {
-            title: metadata.final?.title || metadata.tmdb?.name || 'Unknown',
-            year: metadata.final?.year || '',
-            tmdbId: metadata.tmdb?.id || '',
-            imdbId: metadata.tmdb?.external_ids?.imdb_id || '',
-            overview: metadata.tmdb?.overview || '',
-            firstAirDate: metadata.tmdb?.first_air_date || '',
-            genres: metadata.tmdb?.genres || [],
-            cast: metadata.tmdb?.credits?.cast || [],
-            rating: metadata.tmdb?.vote_average || '',
-            voteCount: metadata.tmdb?.vote_count || '',
-            status: metadata.tmdb?.status || '',
-            originalTitle: metadata.tmdb?.original_name || '',
-            originalLanguage: metadata.tmdb?.original_language || '',
-            networks: metadata.tmdb?.networks || [],
-            productionCompanies: metadata.tmdb?.production_companies || []
-          });
-          if (onLog) onLog('Created tvshow.nfo');
-        }
-
-        // Create episode NFO
-        await writeEpisodeNfo(outputPath, {
-          title: tvInfo.episodeTitle || `Episode ${tvInfo.episode}`,
-          showTitle: metadata.final?.title || '',
-          season: tvInfo.season || 1,
-          episode: tvInfo.episode || 1,
-          overview: tvInfo.overview || '',
-          airDate: tvInfo.airDate || '',
-          runtime: tvInfo.runtime || '',
-          rating: tvInfo.rating || '',
-          voteCount: tvInfo.voteCount || '',
-          tmdbId: tvInfo.tmdbId || ''
-        });
-        if (onLog) onLog('Created episode NFO');
-      } else {
         // For movies: create movie.nfo in the movie folder
         await writeMovieNfo(folderPath, {
           title: metadata.final?.title || metadata.tmdb?.title || 'Unknown',
@@ -459,11 +416,11 @@ export class EmbyExporter {
           productionCompanies: metadata.tmdb?.production_companies || ''
         });
         if (onLog) onLog('Created movie.nfo');
+      } catch (nfoErr) {
+        logger.error('emby', `Failed to create NFO: ${nfoErr.message}`);
+        if (onLog) onLog(`Warning: Could not create NFO file: ${nfoErr.message}`);
+        // Don't fail the export if NFO creation fails
       }
-    } catch (nfoErr) {
-      logger.error('emby', `Failed to create NFO: ${nfoErr.message}`);
-      if (onLog) onLog(`Warning: Could not create NFO file: ${nfoErr.message}`);
-      // Don't fail the export if NFO creation fails
     }
 
     logger.info('emby', `Export complete: ${outputPath}`);

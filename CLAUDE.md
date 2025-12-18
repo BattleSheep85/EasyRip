@@ -185,6 +185,41 @@ Alternative: npm run dev (web server only)
 - Descriptive logging with context
 - Error handling with user-friendly messages
 
+## Engineering Standards
+
+### Before Writing Code
+1. **Understand first**: Read existing code in the affected area before making changes
+2. **Plan non-trivial changes**: Use plan mode for features touching 3+ files
+3. **Ask when uncertain**: Don't guess at requirements - clarify ambiguous requests
+4. **Check for existing patterns**: Follow established patterns in the codebase, don't invent new ones
+
+### While Writing Code
+1. **Small, focused changes**: One logical change per edit - don't mix refactoring with features
+2. **Test as you go**: Run relevant tests after each significant change, not just at the end
+3. **Handle errors properly**: Never swallow errors silently; log with context
+4. **Consider edge cases**: Empty arrays, null values, network failures, user cancellation
+
+### After Writing Code
+1. **Verify it works**: Run the app or tests to confirm the change works as expected
+2. **Clean up**: Remove debug logs, commented code, and unused imports
+3. **Update changelog**: Document user-facing changes in `docs/CHANGELOG.md`
+4. **Self-review**: Re-read the diff before considering the task complete
+
+### Code Review Mindset
+When modifying code, ask:
+- Could this break existing functionality?
+- Is there a simpler way to achieve this?
+- Would another developer understand this code?
+- Are there any security implications?
+- What happens if this fails?
+
+### What NOT To Do
+- Don't add features that weren't requested
+- Don't refactor unrelated code while fixing a bug
+- Don't add "nice to have" error handling for impossible scenarios
+- Don't create abstractions for single-use code
+- Don't leave TODO comments - either fix it or don't mention it
+
 ## Important Constraints
 
 - Never pre-create MakeMKV target folders (it creates them itself)
@@ -232,3 +267,28 @@ See `tests/gui-scenarios.md` for 10 test scenarios.
 
 ### Hooks
 Unit tests run automatically after code changes via PostToolUse hook in `.claude/settings.json`.
+
+## Changelog Management
+
+**MANDATORY**: After completing ANY code changes (features, bug fixes, refactors), you MUST update `docs/CHANGELOG.md`:
+
+1. Add entry under `[Unreleased]` section
+2. Categorize as: `Added`, `Changed`, `Fixed`, `Removed`, `Security`, or `Deprecated`
+3. Write clear, user-facing descriptions (not technical implementation details)
+4. Reference the affected component/area
+
+**Format**:
+```markdown
+## [Unreleased]
+
+### Added
+- New feature description
+
+### Fixed
+- Bug fix description
+
+### Changed
+- Behavior change description
+```
+
+When a GitHub release is created, move `[Unreleased]` items to a versioned section `[X.Y.Z] - YYYY-MM-DD`.

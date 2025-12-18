@@ -20,7 +20,7 @@ import { getTransferManager } from './transfer.js';
 import { getDiscIdentifier } from './metadata/identifier.js';
 import { MetadataStatus, MediaType } from './metadata/schemas.js';
 import { getTMDBClient } from './metadata/tmdb.js';
-import { writeMovieNfo, writeTvShowNfo, writeEpisodeNfo } from './nfo.js';
+import { writeMovieNfo } from './nfo.js';
 import {
   analyzeDiscForEpisodes,
   extractSeasonFromLabel,
@@ -604,29 +604,10 @@ export class ExportWatcher {
     let lastTransferResult = null;
     const exportedEpisodes = [];
 
-    // Create tvshow.nfo (check if already exists to avoid duplicate work in parallel)
+    // Series relative path for folder structure
     const seriesRelativePath = seriesFolderName.replace(/[<>:"/\\|?*]/g, '');
-    try {
-      const tvShowNfoPath = path.join(tempDir, 'tvshow.nfo');
-      await writeTvShowNfo(tempDir, {
-        title: showTitle,
-        year: showYear || '',
-        tmdbId: job.metadata.tmdb?.id || '',
-        overview: job.metadata.tmdb?.overview || '',
-        firstAirDate: job.metadata.tmdb?.first_air_date || job.metadata.tmdb?.releaseDate || '',
-        genres: job.metadata.tmdb?.genres || [],
-        rating: job.metadata.tmdb?.vote_average || job.metadata.tmdb?.voteAverage || '',
-        status: job.metadata.tmdb?.status || ''
-      });
 
-      await this.transferManager.transfer(
-        tvShowNfoPath,
-        { ...transferConfig, mediaType: MediaType.TV, relativePath: path.join(seriesRelativePath, 'tvshow.nfo') },
-        null, null
-      ).catch(() => {}); // Ignore if already exists
-    } catch (err) {
-      // Ignore - may already exist from parallel export
-    }
+    // NOTE: TV show NFO files disabled - they cause Emby to not detect episodes properly
 
     // Export each episode
     for (let i = 0; i < episodes.length; i++) {
@@ -668,27 +649,6 @@ export class ExportWatcher {
         null
       );
 
-      // Generate episode NFO
-      const nfoFileName = outputInfo.fileName.replace('.mkv', '.nfo');
-      const tempNfoPath = path.join(tempDir, nfoFileName);
-      const nfoRelativePath = path.join(folderRelative, nfoFileName);
-
-      try {
-        await writeEpisodeNfo(tempMkvPath, {
-          title: ep.episodeTitle,
-          showTitle: showTitle,
-          season: seasonNum,
-          episode: episodeNum,
-          overview: ep.overview || '',
-          airDate: ep.airDate || '',
-          runtime: ep.runtime || Math.round(ep.duration / 60),
-          rating: '',
-          tmdbId: job.metadata.tmdb?.id || ''
-        });
-      } catch (nfoErr) {
-        log.warn(`Episode NFO warning: ${nfoErr.message}`);
-      }
-
       // Transfer MKV
       lastTransferResult = await this.transferManager.transfer(
         tempMkvPath,
@@ -700,16 +660,8 @@ export class ExportWatcher {
         null
       );
 
-      // Transfer NFO
-      await this.transferManager.transfer(
-        tempNfoPath,
-        { ...transferConfig, mediaType: MediaType.TV, relativePath: nfoRelativePath },
-        null, null
-      ).catch(() => {});
-
       // Clean up temp files to save disk space
       await fs.unlink(tempMkvPath).catch(() => {});
-      await fs.unlink(tempNfoPath).catch(() => {});
 
       exportedEpisodes.push({
         season: seasonNum,
@@ -1163,32 +1115,10 @@ export class ExportWatcher {
     let lastTransferResult = null;
     const exportedEpisodes = [];
 
-    // Create tvshow.nfo first (at series level)
+    // Series relative path for folder structure
     const seriesRelativePath = seriesFolderName.replace(/[<>:"/\\|?*]/g, '');
 
-    try {
-      const tvShowNfoPath = path.join(tempDir, 'tvshow.nfo');
-      await writeTvShowNfo(tempDir, {
-        title: showTitle,
-        year: showYear || '',
-        tmdbId: job.metadata.tmdb?.id || '',
-        overview: job.metadata.tmdb?.overview || '',
-        firstAirDate: job.metadata.tmdb?.first_air_date || job.metadata.tmdb?.releaseDate || '',
-        genres: job.metadata.tmdb?.genres || [],
-        rating: job.metadata.tmdb?.vote_average || job.metadata.tmdb?.voteAverage || '',
-        status: job.metadata.tmdb?.status || ''
-      });
-
-      // Transfer tvshow.nfo to series root
-      await this.transferManager.transfer(
-        tvShowNfoPath,
-        { ...transferConfig, mediaType: MediaType.TV, relativePath: path.join(seriesRelativePath, 'tvshow.nfo') },
-        null, null
-      );
-      this.emitLog(job.name, 'Created and transferred tvshow.nfo');
-    } catch (tvNfoErr) {
-      log.warn(`tvshow.nfo warning: ${tvNfoErr.message}`);
-    }
+    // NOTE: TV show NFO files disabled - they cause Emby to not detect episodes properly
 
     // Export each episode
     for (let i = 0; i < episodes.length; i++) {
@@ -1231,27 +1161,6 @@ export class ExportWatcher {
         (message) => this.emitLog(job.name, message)
       );
 
-      // Generate episode NFO
-      const nfoFileName = outputInfo.fileName.replace('.mkv', '.nfo');
-      const tempNfoPath = path.join(tempDir, nfoFileName);
-      const nfoRelativePath = path.join(folderRelative, nfoFileName);
-
-      try {
-        await writeEpisodeNfo(tempMkvPath, {
-          title: ep.episodeTitle,
-          showTitle: showTitle,
-          season: seasonNum,
-          episode: episodeNum,
-          overview: ep.overview || '',
-          airDate: ep.airDate || '',
-          runtime: ep.runtime || Math.round(ep.duration / 60),
-          rating: '',
-          tmdbId: job.metadata.tmdb?.id || ''
-        });
-      } catch (nfoErr) {
-        log.warn(`Episode NFO warning: ${nfoErr.message}`);
-      }
-
       // Transfer MKV
       this.emitLog(job.name, `Transferring episode to library...`);
 
@@ -1266,20 +1175,8 @@ export class ExportWatcher {
         null
       );
 
-      // Transfer episode NFO
-      try {
-        await this.transferManager.transfer(
-          tempNfoPath,
-          { ...transferConfig, mediaType: MediaType.TV, relativePath: nfoRelativePath },
-          null, null
-        );
-      } catch (nfoErr) {
-        log.warn(`Episode NFO transfer warning: ${nfoErr.message}`);
-      }
-
       // Clean up temp MKV to save disk space
       await fs.unlink(tempMkvPath).catch(() => {});
-      await fs.unlink(tempNfoPath).catch(() => {});
 
       exportedEpisodes.push({
         season: seasonNum,
@@ -1362,23 +1259,6 @@ export class ExportWatcher {
       (m) => this.emitLog(job.name, m)
     );
 
-    // Generate episode NFO
-    const nfoFileName = outputInfo.fileName.replace('.mkv', '.nfo');
-    const tempNfoPath = path.join(tempDir, nfoFileName);
-
-    try {
-      await writeEpisodeNfo(tempMkvPath, {
-        title: tvInfo.episodeTitle || `Episode ${tvInfo.episode}`,
-        showTitle: job.metadata.final?.title || '',
-        season: tvInfo.season || 1,
-        episode: tvInfo.episode || 1,
-        overview: job.metadata.tmdb?.overview || '',
-        tmdbId: job.metadata.tmdb?.id || ''
-      });
-    } catch (nfoErr) {
-      log.warn(`NFO warning: ${nfoErr.message}`);
-    }
-
     // Transfer
     this.emitProgress(job.name, 70, 'Transferring...');
     const transferResult = await this.transferManager.transfer(
@@ -1387,13 +1267,6 @@ export class ExportWatcher {
       (p) => this.emitProgress(job.name, 70 + p.percent * 0.2, 'Transferring...'),
       (m) => this.emitLog(job.name, m)
     );
-
-    // Transfer NFO
-    await this.transferManager.transfer(
-      tempNfoPath,
-      { ...transferConfig, mediaType: MediaType.TV, relativePath: path.join(folderRelative, nfoFileName) },
-      null, null
-    ).catch(() => {});
 
     // Cleanup
     await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
