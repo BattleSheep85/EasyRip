@@ -8,6 +8,7 @@ import os from 'os';
 import { formatSize, isBackupComplete } from '../shared/utils.js';
 import logger from './logger.js';
 import https from 'https';
+import { migrateSettings, needsMigration, CURRENT_SETTINGS_VERSION } from './settings-migration.js';
 
 // MakeMKV Performance Presets
 // These define cache sizes, buffer limits, and timeout values optimized for different disc types
@@ -92,7 +93,18 @@ export class MakeMKVAdapter {
     if (this._settingsLoaded) return; // Already loaded
     try {
       const data = await fs.readFile(this.settingsPath, 'utf8');
-      const settings = JSON.parse(data);
+      let settings = JSON.parse(data);
+
+      // Check if settings need migration
+      if (needsMigration(settings)) {
+        logger.info('makemkv', `Migrating settings from v${settings.settingsVersion || 0} to v${CURRENT_SETTINGS_VERSION}`);
+        settings = migrateSettings(settings);
+        // Save migrated settings back to disk
+        await fs.writeFile(this.settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+        logger.info('makemkv', 'Settings migration complete');
+      }
+
+      this.settingsVersion = settings.settingsVersion || CURRENT_SETTINGS_VERSION;
       this.makemkvPath = settings.makemkvPath || this.makemkvPath;
       this.basePath = settings.basePath || 'D:\\EasyRip';
       this.tmdbApiKey = settings.tmdbApiKey || '';
@@ -104,6 +116,7 @@ export class MakeMKVAdapter {
       this.aiProviders = settings.aiProviders || this.aiProviders;
     } catch {
       // Settings file doesn't exist yet, use defaults
+      this.settingsVersion = CURRENT_SETTINGS_VERSION;
       this.basePath = 'D:\\EasyRip';
       this.tmdbApiKey = '';
       this.makemkvKey = '';
@@ -140,6 +153,7 @@ export class MakeMKVAdapter {
 
     // Build and cache the settings object
     const settingsObject = {
+      settingsVersion: this.settingsVersion || CURRENT_SETTINGS_VERSION,
       makemkvPath: this.makemkvPath,
       basePath: this.basePath,
       tmdbApiKey: this.tmdbApiKey,
@@ -159,6 +173,7 @@ export class MakeMKVAdapter {
 
   // Save settings to disk
   async saveSettings(settings) {
+    this.settingsVersion = CURRENT_SETTINGS_VERSION; // Always save with current version
     this.makemkvPath = settings.makemkvPath || this.makemkvPath;
     this.basePath = settings.basePath || this.basePath;
     this.tmdbApiKey = settings.tmdbApiKey || '';
@@ -169,14 +184,21 @@ export class MakeMKVAdapter {
     this.extraction = settings.extraction || { defaultMode: 'full_backup', minTitleLength: 10 };
     this.aiProviders = settings.aiProviders || this.aiProviders;
 
+    // Build settings object with version
+    const settingsToSave = {
+      settingsVersion: CURRENT_SETTINGS_VERSION,
+      ...settings
+    };
+
     await fs.writeFile(
       this.settingsPath,
-      JSON.stringify(settings, null, 2),
+      JSON.stringify(settingsToSave, null, 2),
       'utf8'
     );
 
     // Invalidate settings cache after save
     this.settingsCache = {
+      settingsVersion: CURRENT_SETTINGS_VERSION,
       makemkvPath: this.makemkvPath,
       basePath: this.basePath,
       tmdbApiKey: this.tmdbApiKey,
