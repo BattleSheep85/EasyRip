@@ -6,9 +6,9 @@
 
 **Automated DVD & Blu-ray Backup Made Simple**
 
-A modern Electron application for streamlined disc backup using MakeMKV, with AI-powered metadata management and flexible export options.
+A modern Electron application for streamlined disc backup using MakeMKV, with parallel drive support, AI-powered metadata management, and flexible export options.
 
-[![Version](https://img.shields.io/badge/version-0.1.2-blue.svg)](https://github.com/BattleSheep85/EasyRip/releases)
+[![Version](https://img.shields.io/badge/version-0.4.0-blue.svg)](https://github.com/BattleSheep85/EasyRip/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)](https://github.com/BattleSheep85/EasyRip)
 [![Electron](https://img.shields.io/badge/Electron-28.1.0-47848f.svg)](https://www.electronjs.org/)
@@ -20,23 +20,50 @@ A modern Electron application for streamlined disc backup using MakeMKV, with AI
 
 ---
 
-## Features
+## Why EasyRip?
 
-- **Automated Disc Detection** - Automatically detects optical drives and disc contents
-- **Intelligent Backup Queue** - Queue multiple backups with sequential processing
-- **AI-Powered Metadata** - Integrate with TMDB and Ollama for automatic disc identification and metadata enrichment
-- **Flexible Export Options** - Transfer backups to local paths, network shares (UNC/SMB), SFTP, or FTP
-- **Real-Time Progress Tracking** - Monitor backup and export progress with detailed status updates
-- **Dark/Light Theme** - Comfortable viewing experience with theme toggle
-- **Auto-Updates** - Built-in update checker keeps the app current
-- **Comprehensive Logging** - Detailed logs for troubleshooting and audit trails
-- **Modular Architecture** - Clean separation between main process and renderer for reliability
+| Feature | Traditional Approach | EasyRip |
+|---------|---------------------|---------|
+| **Multi-Drive Backups** | Run MakeMKV multiple times manually | Parallel backup across all drives simultaneously |
+| **Disc Swapping** | Wait minutes for each scan | Instant detection - swap and go |
+| **Disc Identification** | Manual lookup on IMDB/TMDB | AI-powered auto-identification with fingerprinting |
+| **Stuck Backups** | Stare at frozen progress bar wondering | Stall detection with diagnostic info |
+| **Library Export** | Manual file copying and renaming | Auto-export to Emby/Jellyfin with proper naming |
+
+---
+
+## Key Features
+
+### Parallel Backup Engine
+Backup multiple discs simultaneously across all your optical drives. Each drive operates independently - no blocking, no waiting.
+
+### Instant Disc Detection
+Swap discs without the wait. EasyRip detects disc type instantly from the filesystem, deferring the slower MakeMKV query until backup actually starts.
+
+### Stall Detection & Recovery
+Backups that stop making progress for 3 minutes are automatically detected and flagged as "STALLED" with diagnostic info to help identify the cause.
+
+### AI-Powered Identification
+- **Disc Fingerprinting** - CRC64 hashing of DVD/Blu-ray structures
+- **ARM Database** - Automatic lookup against the ARM disc database
+- **Multi-Provider LLM** - Works with Ollama, OpenAI, Anthropic, Google, or OpenRouter
+- **TMDB Integration** - Rich metadata for movies and TV shows
+
+### Smart Extract
+Intelligently select only the main feature based on disc analysis, skipping menus, extras, and trailers.
+
+### Flexible Export System
+- **Local paths** - Copy to any drive or folder
+- **Network shares** - UNC/SMB paths (e.g., `\\NAS\Media`)
+- **SFTP** - Secure transfer to Linux/Unix servers
+- **FTP** - Standard FTP to any server
+- **Emby/Jellyfin** - Proper folder structure with metadata
 
 ---
 
 ## Screenshots
 
-### Home Page - Drive Detection & Backup
+### Home Page - Drive Detection & Parallel Backup
 ![Home Page](docs/screenshots/01-home.png)
 
 ### Settings - Configuration
@@ -48,11 +75,8 @@ A modern Electron application for streamlined disc backup using MakeMKV, with AI
 ### Export Manager - Transfer Options
 ![Export Manager](docs/screenshots/04-export-manager.png)
 
-### Logs - Detailed Activity Tracking
+### Logs - Color-Coded Activity Tracking
 ![Logs](docs/screenshots/05-logs.png)
-
-### Dark Mode
-![Dark Mode](docs/screenshots/06-dark-mode.png)
 
 ---
 
@@ -67,7 +91,7 @@ A modern Electron application for streamlined disc backup using MakeMKV, with AI
 ### Download & Install
 
 1. Download the latest installer from the [Releases](https://github.com/BattleSheep85/EasyRip/releases) page
-2. Run `EasyRip-Setup-x.x.x.exe`
+2. Run `EasyRip-Setup-0.4.0.exe`
 3. Follow the installation wizard
 4. Launch EasyRip from the Start Menu or Desktop shortcut
 
@@ -77,30 +101,25 @@ A modern Electron application for streamlined disc backup using MakeMKV, with AI
 
 ## Quick Start
 
-### 5 Steps to Your First Backup
+### First-Time Setup (2 minutes)
 
-1. **Configure MakeMKV Path**
-   - Open Settings (gear icon)
-   - Navigate to **Paths** tab
-   - Set the path to `makemkvcon64.exe` (usually `C:\Program Files (x86)\MakeMKV\makemkvcon64.exe`)
+1. **Open Settings** (gear icon in toolbar)
+2. **Set MakeMKV Path** → Paths tab → Browse to `makemkvcon64.exe`
+   - Default: `C:\Program Files (x86)\MakeMKV\makemkvcon64.exe`
+3. **Set Backup Location** → Paths tab → Choose your backup folder
+   - Example: `D:\EasyRip\backup`
+4. **Click Save**
 
-2. **Set Backup Location**
-   - In Settings > **Paths** tab
-   - Set your **Backup Output Path** (e.g., `D:\EasyRip\backup`)
-   - Optionally set a **Temp Path** for in-progress backups
+### Backing Up a Disc
 
-3. **Insert a Disc**
-   - Insert a DVD or Blu-ray disc into your optical drive
-   - EasyRip will automatically detect the disc
+1. **Insert disc** into any optical drive
+2. **Click "Scan Disks"** or wait for auto-detection
+3. **Click "Backup"** on the detected disc
+4. **Watch progress** - EasyRip handles the rest
 
-4. **Start Backup**
-   - Click **Scan Drive** to analyze disc contents
-   - Select the titles you want to backup (typically the main feature)
-   - Click **Start Backup**
+### Multi-Drive Workflow
 
-5. **Monitor Progress**
-   - Watch real-time progress in the progress bar
-   - View detailed logs by clicking the **Logs** button
+Insert discs into multiple drives and click Backup on each - they all run in parallel! The UI shows individual progress for each drive without blocking.
 
 ---
 
@@ -110,145 +129,93 @@ A modern Electron application for streamlined disc backup using MakeMKV, with AI
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| **Auto-Scan** | Automatically scan drives on app startup | Enabled |
-| **Auto-Backup** | Automatically start backup when disc is detected | Disabled |
-| **Notifications** | Show system notifications for backup events | Enabled |
+| **Auto-Scan** | Scan drives on app startup | Enabled |
+| **Auto-Backup** | Start backup when disc detected | Disabled |
+| **Eject After Backup** | Automatically eject disc when done | Disabled |
+| **Notifications** | Desktop notifications for events | Enabled |
 
 ### Path Settings
 
 | Path | Purpose | Example |
 |------|---------|---------|
-| **MakeMKV Executable** | Location of `makemkvcon64.exe` | `C:\Program Files (x86)\MakeMKV\makemkvcon64.exe` |
-| **Backup Output Path** | Where completed backups are stored | `D:\EasyRip\backup` |
-| **Temp Path** | Temporary location during backup | `D:\EasyRip\temp` |
+| **MakeMKV Executable** | Path to `makemkvcon64.exe` | `C:\Program Files (x86)\MakeMKV\makemkvcon64.exe` |
+| **Backup Output Path** | Where completed backups go | `D:\EasyRip\backup` |
+| **Temp Path** | Working directory during backup | `D:\EasyRip\temp` |
+
+### LLM Settings (For Disc Identification)
+
+EasyRip supports multiple AI providers for disc identification:
+
+| Provider | Configuration |
+|----------|---------------|
+| **Ollama** (Local) | Install Ollama, select model (e.g., `llama3.2`) |
+| **OpenAI** | API key required |
+| **Anthropic** | API key required |
+| **Google AI** | API key required |
+| **OpenRouter** | API key + model selection |
 
 ### Transfer Settings
 
-Configure automatic or manual export of completed backups:
+Configure where to export completed backups:
 
-- **Local Path** - Copy to another drive or folder
-- **UNC/SMB Path** - Transfer to network shares (e.g., `\\NAS\Media`)
-- **SFTP** - Secure FTP transfer to remote servers
-- **FTP** - Standard FTP transfer
-
-### Appearance Settings
-
-- **Theme** - Light, Dark, or System (auto-detect)
-- **Compact Mode** - Reduce UI spacing for smaller screens
+- **Local Path** - `E:\Media\Movies`
+- **UNC/SMB** - `\\192.168.1.100\Media`
+- **SFTP** - Host, port, username, password/key
+- **FTP** - Host, port, credentials
 
 ---
 
-## Usage Guide
+## Automation Workflow
 
-### Backing Up Discs
+Enable hands-free operation with these toggles in Settings:
 
-#### Manual Backup
-1. Insert disc into optical drive
-2. Click **Scan Drive** button
-3. Review detected titles (sorted by size)
-4. Select main title (usually the largest file)
-5. Click **Start Backup**
-6. Wait for completion (progress bar shows status)
+| Step | Toggle | What Happens |
+|------|--------|--------------|
+| 1 | **Auto-Scan** | Drives scanned on startup |
+| 2 | **Auto-Backup** | Backup starts when disc inserted |
+| 3 | **Eject After Backup** | Disc ejects when done |
+| 4 | **Auto-Export** | Backup transfers to configured destination |
 
-#### Automatic Backup
-Enable **Auto-Backup** in Settings to automatically start backup when a disc is inserted.
-
-### Metadata Management
-
-EasyRip can automatically identify discs and enrich metadata using TMDB and Ollama.
-
-#### Setup
-1. Navigate to **Metadata Manager** page
-2. Configure **TMDB API Key** (get one free at [TMDB](https://www.themoviedb.org/settings/api))
-3. Optionally configure **Ollama** for local AI inference
-
-#### Workflow
-1. After backup completes, go to Metadata Manager
-2. Click **Identify Disc** on a backup
-3. EasyRip uses AI to determine if disc is a movie or TV series
-4. Review and edit metadata as needed
-5. Metadata is saved with the backup
-
-### Export Management
-
-Transfer completed backups to external storage or network locations.
-
-#### Manual Export
-1. Navigate to **Export Manager** page
-2. Select a backup from the list
-3. Choose export destination (local, network, SFTP, FTP)
-4. Click **Export**
-5. Monitor progress in the status bar
-
-#### Automatic Export
-Enable **Auto-Export** in Transfer Settings to automatically transfer backups after completion.
+**Full Automation**: Enable all toggles, configure export destination, then just swap discs!
 
 ---
 
-## Automation
+## Advanced Features
 
-EasyRip offers three automation toggles for a hands-free workflow:
+### Smart Extract Mode
 
-| Toggle | Function | Use Case |
-|--------|----------|----------|
-| **Auto-Scan** | Automatically scan drives on startup | Skip manual "Scan Drive" clicks |
-| **Auto-Backup** | Start backup immediately when disc detected | Insert disc and walk away |
-| **Auto-Export** | Transfer backup to configured destination after completion | Automatic network storage |
+Instead of backing up the entire disc, Smart Extract analyzes the content and extracts only the main feature:
+- Skips menus, trailers, and special features
+- Uses title duration and size heuristics
+- Configurable minimum length threshold
 
-**Full Automation Workflow**:
-1. Enable all three toggles in Settings
-2. Configure export destination (e.g., network share)
-3. Insert disc
-4. EasyRip scans → backs up → exports → done!
+Enable in the backup options when starting a backup.
 
----
+### Disc Fingerprinting
 
-## Transfer Options
+EasyRip captures a unique fingerprint of each disc before backup:
+- **DVD**: CRC64 of VIDEO_TS IFO files
+- **Blu-ray**: Content ID, organization ID, disc ID from BDMV
 
-### Local Path
-Copy backups to another local drive or folder.
+These fingerprints enable:
+- ARM database lookup for instant identification
+- Matching future copies of the same disc
+- Deduplication detection
 
-```
-Example: E:\Media\Movies
-```
+### Per-Drive Operations
 
-### UNC/SMB Network Share
-Transfer to Windows network shares or NAS devices.
+Each drive operates independently:
+- **Refresh button (↻)** rescans only that drive
+- Backup on one drive doesn't block scanning another
+- Stall detection per-drive with individual diagnostics
 
-```
-Example: \\192.168.1.100\Media\Movies
-Example: \\NAS-SERVER\Share\Backups
-```
+### Color-Coded Logs
 
-**Requirements**:
-- Network share must be accessible from the Windows machine
-- May require credentials (saved in Windows Credential Manager)
-
-### SFTP (SSH File Transfer Protocol)
-Secure transfer to remote Linux/Unix servers.
-
-```
-Host: sftp.example.com
-Port: 22
-Username: user
-Password/Key: ********
-Remote Path: /home/user/media/movies
-```
-
-**Requirements**:
-- SSH access to remote server
-- SFTP enabled on server
-
-### FTP (File Transfer Protocol)
-Standard FTP transfer to remote servers.
-
-```
-Host: ftp.example.com
-Port: 21
-Username: user
-Password: ********
-Remote Path: /public_html/media
-```
+The logs page now shows entries with color-coded levels:
+- <span style="color: gray">DEBUG</span> - Verbose diagnostic info
+- <span style="color: #4fc3f7">INFO</span> - Normal operations
+- <span style="color: orange">WARN</span> - Potential issues
+- <span style="color: red">ERROR</span> - Failures requiring attention
 
 ---
 
@@ -257,49 +224,44 @@ Remote Path: /public_html/media
 ### Common Issues
 
 #### Disc Not Detected
-- **Solution**: Ensure disc is properly inserted and drive door is closed
-- Check **Logs** for hardware errors
-- Try clicking **Scan Drive** manually
+- Ensure disc is properly inserted
+- Click **Scan Disks** button manually
+- Check if MakeMKV can see the drive directly
 
-#### MakeMKV Errors
-- **Solution**: Verify MakeMKV is installed and licensed
-- Check MakeMKV path in Settings > Paths
-- Ensure disc is not copy-protected or damaged
+#### Backup Shows "STALLED"
+The backup hasn't made progress in 3 minutes. Check:
+- Is the disc scratched or damaged?
+- Is MakeMKV still running in Task Manager?
+- Check logs for the last MakeMKV output
 
-#### Backup Stuck at 0%
-- **Solution**: MakeMKV may be analyzing the disc structure (can take 1-2 minutes)
-- Check temp path has sufficient disk space
-- Review logs for errors
+#### Backup Stuck at Early Percentage
+- MakeMKV may be reading a difficult section
+- Wait a few minutes - stall detection will flag real issues
+- Check available disk space on temp drive
 
 #### Export Fails
-- **Solution**: Verify network connectivity for remote transfers
+- Verify network connectivity for remote transfers
 - Check credentials for SFTP/FTP
 - Ensure destination has sufficient disk space
+- Check logs for specific error messages
 
-#### App Won't Start
-- **Solution**: Check for corrupt settings file at `~/.easyrip-settings.json`
-- Delete settings file to reset to defaults
-- Reinstall the application
+#### App Won't Start / Multiple Windows
+EasyRip uses single-instance locking. If it seems stuck:
+1. Check Task Manager for existing `EasyRip.exe` process
+2. End the process if hung
+3. Relaunch the app
 
 ### Log Files
 
-EasyRip maintains detailed logs for troubleshooting:
-
 - **Location**: `~/.easyrip/logs/`
 - **Format**: `easyrip-YYYY-MM-DD.log`
-- **Access**: Click **Logs** button in the app or navigate to folder manually
+- **Access**: Click **Logs** button in the app toolbar
 
 ---
 
 ## Development
 
 ### Building from Source
-
-#### Prerequisites
-- Node.js 18+ and npm
-- Git
-
-#### Steps
 
 ```bash
 # Clone the repository
@@ -309,10 +271,10 @@ cd EasyRip
 # Install dependencies
 npm install
 
-# Run in development mode
+# Run in development mode (with hot reload)
 npm run electron:dev
 
-# Build for production
+# Build Windows installer
 npm run dist
 ```
 
@@ -321,93 +283,103 @@ npm run dist
 ```
 EasyRip/
 ├── src/
-│   ├── main/              # Electron main process (Node.js)
-│   │   ├── index.js       # App entry, IPC handlers
-│   │   ├── makemkv.js     # MakeMKV CLI adapter
-│   │   ├── drives.js      # Drive detection
-│   │   └── logger.js      # Logging system
-│   ├── renderer/          # React frontend
-│   │   ├── pages/         # Page components
-│   │   ├── components/    # Reusable components
-│   │   └── context/       # React context providers
+│   ├── main/                  # Electron main process
+│   │   ├── index.js           # App lifecycle, single-instance lock
+│   │   ├── backup-manager.js  # Parallel backup orchestration
+│   │   ├── makemkv.js         # MakeMKV CLI adapter, stall detection
+│   │   ├── drives.js          # Drive detection, instant scanning
+│   │   ├── ipc-handlers.js    # All IPC communication
+│   │   └── metadata/          # Fingerprinting, LLM, TMDB
+│   ├── renderer/              # React frontend
+│   │   ├── pages/             # Page components
+│   │   ├── components/        # Reusable UI components
+│   │   └── context/           # React context providers
 │   └── styles/
-│       └── app.css        # Application styles
-├── tests/                 # Unit and E2E tests
-├── build/                 # Build resources (icons, installer scripts)
-└── docs/                  # Documentation and screenshots
+│       └── app.css            # Application styles
+├── tests/                     # Unit and E2E tests
+├── build/                     # Build resources
+└── docs/                      # Documentation
 ```
 
 ### Tech Stack
 
-- **Frontend**: React 18, React Router 7
-- **Backend**: Electron 28, Node.js
-- **Build Tool**: Vite 5
-- **Testing**: Playwright, Node.js test runner
-- **Packaging**: electron-builder
+| Layer | Technology |
+|-------|------------|
+| **Frontend** | React 18, React Router 7 |
+| **Backend** | Electron 28, Node.js |
+| **Build** | Vite 5 |
+| **Testing** | Playwright, Node.js test runner |
+| **Packaging** | electron-builder |
 
 ### Testing
 
 ```bash
-# Run unit tests
-npm test
+# Run all unit tests
+npm run test:unit
 
-# Run GUI tests (E2E)
-npm run test:e2e
+# Run specific test suites
+npm run test:drives
+npm run test:makemkv
+npm run test:settings
 
-# Run in debug mode with Playwright inspector
-npm run test:gui:debug
+# Run E2E tests
+npm run test:electron
+
+# Run E2E tests with visible browser
+npm run test:electron:headed
 ```
 
-### Scripts
+---
 
-| Command | Description |
-|---------|-------------|
-| `npm run dev` | Start Vite dev server |
-| `npm run electron:dev` | Start app in development mode |
-| `npm run build` | Build renderer for production |
-| `npm run dist` | Build installer for Windows |
-| `npm test` | Run all unit tests |
-| `npm run test:e2e` | Run end-to-end GUI tests |
+## Version History
+
+See [CHANGELOG.md](docs/CHANGELOG.md) for detailed release notes.
+
+### Recent Highlights
+
+**v0.4.0** - Parallel backup engine, instant disc scanning, stall detection, single instance lock
+
+**v0.3.0** - Engineering standards, slash commands, changelog tracking
+
+**v0.2.0** - Multi-provider LLM support, Smart Extract, TMDB episode titles
 
 ---
 
 ## Contributing
 
-Contributions are welcome! Please follow these guidelines:
+Contributions are welcome! Please:
 
-1. **Fork the repository**
-2. **Create a feature branch**: `git checkout -b feature/amazing-feature`
-3. **Commit your changes**: `git commit -m 'Add amazing feature'`
-4. **Push to the branch**: `git push origin feature/amazing-feature`
-5. **Open a Pull Request**
+1. **Fork** the repository
+2. **Create** a feature branch: `git checkout -b feature/my-feature`
+3. **Commit** changes: `git commit -m 'Add my feature'`
+4. **Push** to branch: `git push origin feature/my-feature`
+5. **Open** a Pull Request
 
-### Contribution Guidelines
+### Guidelines
 
-- Follow the existing code style (ES modules, async/await)
+- Follow existing code style (ES modules, async/await)
 - Write tests for new features
-- Update documentation as needed
+- Update `docs/CHANGELOG.md` for user-facing changes
 - Keep commits focused and descriptive
 
 ---
 
 ## Credits
 
-EasyRip is built on top of excellent open-source projects and services:
+Built on these excellent projects:
 
-- **[MakeMKV](https://www.makemkv.com/)** - DVD and Blu-ray decryption and transcoding
-- **[TMDB (The Movie Database)](https://www.themoviedb.org/)** - Movie and TV show metadata
-- **[Ollama](https://ollama.ai/)** - Local AI inference for disc identification
-- **[Electron](https://www.electronjs.org/)** - Cross-platform desktop framework
+- **[MakeMKV](https://www.makemkv.com/)** - DVD/Blu-ray decryption
+- **[TMDB](https://www.themoviedb.org/)** - Movie & TV metadata
+- **[Ollama](https://ollama.ai/)** - Local AI inference
+- **[Electron](https://www.electronjs.org/)** - Desktop framework
 - **[React](https://reactjs.org/)** - UI library
-- **[Vite](https://vitejs.dev/)** - Build tool and dev server
-
-Special thanks to all contributors and users who help make EasyRip better!
+- **[Vite](https://vitejs.dev/)** - Build tool
 
 ---
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT License - see [LICENSE](LICENSE) for details.
 
 ---
 
@@ -420,8 +392,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 <div align="center">
 
-**Made with ❤️ for the home media preservation community**
+**Made with care for the home media preservation community**
 
-[⬆ Back to Top](#easyrip)
+[Back to Top](#easyrip)
 
 </div>
