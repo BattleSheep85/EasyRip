@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2025-12-20
+
+### Fixed
+- **No More Silent Fallback**: AI provider now throws clear error instead of silently falling back to Ollama when selected provider (Claude/OpenRouter) is unavailable
+
 ## [0.4.1] - 2025-12-20
 
 ### Added

@@ -300,8 +300,7 @@ async function initializeAIProviders(settings) {
     logger.info('metadata', `AI provider initialized: ${activeProvider}, isAvailable=${activeAvailable}`);
   } catch (error) {
     logger.error('metadata', 'Failed to initialize AI providers', error);
-    // Fall back to Ollama
-    const providerManager = getProviderManager();
-    providerManager.setActiveProvider('ollama', {});
+    // NO FALLBACK - let the error propagate so user knows something is wrong
+    // The selected provider will fail at query time with a clear error message
   }
 }

@@ -847,41 +847,36 @@ export class DiscIdentifier {
             extracted: metadata.extracted
           };
 
-          // Try provider manager first (supports multiple AI providers)
+          // Use the configured AI provider - NO FALLBACK
           const activeProviderName = this.providerManager.getActiveProviderName();
           const activeProvider = this.providerManager.getActiveProvider();
           const providerAvailable = await activeProvider?.isAvailable();
 
-          if (providerAvailable) {
-            log.info(`Using AI provider: ${activeProviderName}`);
+          log.info(`AI provider: ${activeProviderName}, available: ${providerAvailable}`);
 
-            // For Ollama provider, use the existing optimized identifyDisc method
-            if (activeProviderName === 'ollama') {
-              const ollamaStatus = await this.ollama.getStatus();
-              if (ollamaStatus.running && ollamaStatus.hasModel) {
-                llmGuess = await this.ollama.identifyDisc(discInfo);
-              } else {
-                throw new Error('Ollama model not loaded');
-              }
-            } else {
-              // For other providers (OpenRouter, Claude), build prompt and use provider manager
-              const prompt = this.ollama._buildIdentificationPrompt(discInfo);
-              llmGuess = await this.providerManager.identifyDisc(prompt);
-            }
+          if (!providerAvailable) {
+            // NO SILENT FALLBACK - throw error so user knows something is wrong
+            throw new Error(`AI provider "${activeProviderName}" is not available. Check Settings > AI Providers to verify your API key or credentials are configured.`);
+          }
 
-            metadata.llmGuess = createLLMGuess(llmGuess);
-            log.info(`LLM guess: ${llmGuess.title} (${llmGuess.confidence * 100}% confidence)`);
-          } else {
-            // Fallback to direct Ollama check (for backward compatibility)
+          log.info(`Using AI provider: ${activeProviderName}`);
+
+          // For Ollama provider, use the existing optimized identifyDisc method
+          if (activeProviderName === 'ollama') {
             const ollamaStatus = await this.ollama.getStatus();
             if (ollamaStatus.running && ollamaStatus.hasModel) {
               llmGuess = await this.ollama.identifyDisc(discInfo);
-              metadata.llmGuess = createLLMGuess(llmGuess);
-              log.info(`LLM guess: ${llmGuess.title} (${llmGuess.confidence * 100}% confidence)`);
             } else {
-              log.warn('No AI provider available, skipping LLM identification');
+              throw new Error('Ollama is not running or model not loaded. Start Ollama and ensure a model is downloaded.');
             }
+          } else {
+            // For other providers (OpenRouter, Claude), build prompt and use provider manager
+            const prompt = this.ollama._buildIdentificationPrompt(discInfo);
+            llmGuess = await this.providerManager.identifyDisc(prompt);
           }
+
+          metadata.llmGuess = createLLMGuess(llmGuess);
+          log.info(`LLM guess: ${llmGuess.title} (${llmGuess.confidence * 100}% confidence)`);
         } catch (error) {
           log.error('LLM identification failed:', error.message);
           metadata.llmGuess = createLLMGuess({
