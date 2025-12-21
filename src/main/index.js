@@ -5,7 +5,7 @@ import { app, BrowserWindow, dialog } from 'electron';
 import logger from './logger.js';
 import { getSharedMakeMKV } from './utils.js';
 import { createWindow, setMainWindow, getMainWindow } from './window-manager.js';
-import { initBackupManager, getDriveDetector } from './backup-manager.js';
+import { initBackupManager, getDriveDetector, cancelAllBackups } from './backup-manager.js';
 import { initializeMetadataSystem, cleanupMetadataSystem, getIdentifier } from './metadata-system.js';
 import { setupIPC } from './ipc-handlers.js';
 import { initAutoUpdater } from './updater.js';
@@ -69,14 +69,17 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+  // Always quit when all windows are closed (including on macOS)
+  // EasyRip is not a "stay in dock" type app
+  app.quit();
 });
 
 // Cleanup on quit
 app.on('before-quit', async () => {
   logger.info('app', 'Shutting down...');
+
+  // Kill any running MakeMKV backup processes
+  cancelAllBackups();
 
   // Stop metadata watcher and Ollama
   await cleanupMetadataSystem();

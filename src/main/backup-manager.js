@@ -85,6 +85,33 @@ export function cancelBackup(driveId) {
 }
 
 /**
+ * Cancel ALL running backups (used during app shutdown)
+ * Forcefully kills all MakeMKV child processes
+ */
+export function cancelAllBackups() {
+  const count = runningBackups.size;
+  if (count === 0) {
+    logger.info('cancel-backup', 'No running backups to cancel');
+    return 0;
+  }
+
+  logger.info('cancel-backup', `Cancelling ${count} running backup(s) for shutdown...`);
+
+  for (const [driveId, backup] of runningBackups.entries()) {
+    try {
+      logger.info('cancel-backup', `Killing backup for drive ${driveId} (${backup.discName})`);
+      backup.makemkv.cancelBackup();
+    } catch (err) {
+      logger.warn('cancel-backup', `Error killing backup for ${driveId}: ${err.message}`);
+    }
+  }
+
+  runningBackups.clear();
+  logger.info('cancel-backup', `All ${count} backup(s) cancelled`);
+  return count;
+}
+
+/**
  * Start a backup for a specific drive
  * Returns { success, driveId, started, fingerprint } or { success: false, error }
  */

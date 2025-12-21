@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.3] - 2025-12-20
+
+### Fixed
+- **Clean Shutdown**: App now properly kills all MakeMKV child processes when the GUI is closed, preventing orphaned processes from running in the background
+
 ## [0.4.2] - 2025-12-20
 
 ### Fixed
