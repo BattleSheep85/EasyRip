@@ -244,7 +244,12 @@ async function initializeAIProviders(settings) {
     const aiSettings = settings.aiProviders || {};
     const credStore = getCredentialStore();
 
-    logger.info('metadata', 'Initializing AI providers...', { active: aiSettings.activeProvider });
+    logger.info('metadata', 'Initializing AI providers...', {
+      active: aiSettings.activeProvider,
+      hasOllamaSettings: !!aiSettings.ollama,
+      hasOpenRouterSettings: !!aiSettings.openrouter,
+      hasClaudeSettings: !!aiSettings.claude
+    });
 
     // Configure Ollama provider
     if (aiSettings.ollama) {
@@ -255,12 +260,13 @@ async function initializeAIProviders(settings) {
     if (aiSettings.openrouter) {
       try {
         const apiKey = await credStore.getCredential('openrouter-api-key');
+        logger.info('metadata', `OpenRouter API key loaded: ${apiKey ? 'YES (length=' + apiKey.length + ')' : 'NO'}`);
         providerManager.configureProvider('openrouter', {
           ...aiSettings.openrouter,
           apiKey
         });
       } catch (err) {
-        logger.debug('metadata', 'OpenRouter API key not found');
+        logger.warn('metadata', `OpenRouter credential error: ${err.message}`);
       }
     }
 
@@ -269,13 +275,18 @@ async function initializeAIProviders(settings) {
       try {
         const apiKey = await credStore.getCredential('claude-api-key');
         const oauthToken = await credStore.getCredential('claude-oauth-token');
+        logger.info('metadata', `Claude credentials loaded: apiKey=${apiKey ? 'YES (length=' + apiKey.length + ')' : 'NO'}, oauthToken=${oauthToken ? 'YES' : 'NO'}`);
         providerManager.configureProvider('claude', {
           ...aiSettings.claude,
           apiKey,
           oauthToken
         });
+        // Verify the provider was configured correctly
+        const claudeProvider = providerManager.providers.claude;
+        const isAvailable = await claudeProvider.isAvailable();
+        logger.info('metadata', `Claude provider configured: isAvailable=${isAvailable}, hasApiKey=${!!claudeProvider.apiKey}`);
       } catch (err) {
-        logger.debug('metadata', 'Claude credentials not found');
+        logger.warn('metadata', `Claude credential error: ${err.message}`);
       }
     }
 
@@ -283,7 +294,10 @@ async function initializeAIProviders(settings) {
     const activeProvider = aiSettings.activeProvider || 'ollama';
     providerManager.setActiveProvider(activeProvider, aiSettings[activeProvider] || {});
 
-    logger.info('metadata', `AI provider initialized: ${activeProvider}`);
+    // Verify active provider is available
+    const activeProviderObj = providerManager.getActiveProvider();
+    const activeAvailable = await activeProviderObj?.isAvailable();
+    logger.info('metadata', `AI provider initialized: ${activeProvider}, isAvailable=${activeAvailable}`);
   } catch (error) {
     logger.error('metadata', 'Failed to initialize AI providers', error);
     // Fall back to Ollama

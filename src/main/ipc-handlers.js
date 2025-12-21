@@ -1525,6 +1525,13 @@ function setupAIProviderHandlers() {
       const settings = await makemkv.getSettings();
       const aiSettings = settings.aiProviders || {};
 
+      logger.info('ai-providers', 'Re-initializing from settings', {
+        activeProvider: aiSettings.activeProvider,
+        hasOllama: !!aiSettings.ollama,
+        hasOpenRouter: !!aiSettings.openrouter,
+        hasClaude: !!aiSettings.claude
+      });
+
       // Configure each provider
       if (aiSettings.ollama) {
         manager.configureProvider('ollama', aiSettings.ollama);
@@ -1532,6 +1539,7 @@ function setupAIProviderHandlers() {
 
       if (aiSettings.openrouter) {
         const apiKey = await credStore.getCredential('openrouter-api-key');
+        logger.info('ai-providers', `OpenRouter key loaded: ${apiKey ? 'YES' : 'NO'}`);
         manager.configureProvider('openrouter', {
           ...aiSettings.openrouter,
           apiKey
@@ -1541,16 +1549,27 @@ function setupAIProviderHandlers() {
       if (aiSettings.claude) {
         const apiKey = await credStore.getCredential('claude-api-key');
         const oauthToken = await credStore.getCredential('claude-oauth-token');
+        logger.info('ai-providers', `Claude credentials: apiKey=${apiKey ? 'YES' : 'NO'}, oauth=${oauthToken ? 'YES' : 'NO'}`);
         manager.configureProvider('claude', {
           ...aiSettings.claude,
           apiKey,
           oauthToken
         });
+
+        // Verify configuration
+        const claudeProvider = manager.providers.claude;
+        const isAvailable = await claudeProvider.isAvailable();
+        logger.info('ai-providers', `Claude after config: isAvailable=${isAvailable}, hasApiKey=${!!claudeProvider.apiKey}`);
       }
 
       // Set active provider
       if (aiSettings.activeProvider) {
         manager.setActiveProvider(aiSettings.activeProvider, aiSettings[aiSettings.activeProvider] || {});
+
+        // Verify active provider is available
+        const activeProvider = manager.getActiveProvider();
+        const isAvailable = await activeProvider?.isAvailable();
+        logger.info('ai-providers', `Active provider ${aiSettings.activeProvider}: isAvailable=${isAvailable}`);
       }
 
       logger.info('ai-providers', 'Initialized from settings', { active: aiSettings.activeProvider });
