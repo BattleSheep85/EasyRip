@@ -28,6 +28,25 @@ let discIdentifier = null;
 export function initBackupManager(identifier) {
   driveDetector = new DriveDetector();
   discIdentifier = identifier;
+
+  // DRIVE INDEPENDENCE: Wire up the callback so DriveDetector knows when backups are running
+  // This prevents the blocking MakeMKV call during active backups
+  driveDetector.setBackupRunningCheck(() => runningBackups.size > 0);
+  logger.info('backup-manager', 'Drive independence enabled - scan will use cache during backups');
+}
+
+/**
+ * Check if ANY backups are currently running
+ */
+export function hasAnyRunningBackups() {
+  return runningBackups.size > 0;
+}
+
+/**
+ * Get count of running backups
+ */
+export function getRunningBackupCount() {
+  return runningBackups.size;
 }
 
 /**
@@ -76,10 +95,36 @@ export async function startBackup(driveId, makemkvIndex, discName, discSize, dri
     return { success: false, error: 'Backup already running for this drive' };
   }
 
+  // RESOLVE MAKEMKV INDEX: Query MakeMKV if we don't have a cached mapping
+  // This happens when the scan skipped MakeMKV for speed - we query now instead
+  let resolvedIndex = makemkvIndex;
+  if (driveLetter && driveDetector) {
+    const cached = driveDetector.mappingCache.get(driveLetter);
+    if (!cached || (Date.now() - cached.cachedAt > driveDetector.cacheMaxAge)) {
+      logger.info('start-backup', `Querying MakeMKV for ${driveLetter} mapping (not cached)...`);
+      try {
+        const mapping = await driveDetector.getMakeMKVMapping(true);
+        const mkvData = mapping.get(driveLetter);
+        if (mkvData) {
+          resolvedIndex = mkvData.discIndex;
+          logger.info('start-backup', `Resolved ${driveLetter} -> disc:${resolvedIndex}`);
+        } else {
+          logger.warn('start-backup', `MakeMKV did not return mapping for ${driveLetter}, using fallback disc:${makemkvIndex}`);
+        }
+      } catch (err) {
+        logger.error('start-backup', `Failed to query MakeMKV for ${driveLetter}: ${err.message}`);
+      }
+    } else {
+      resolvedIndex = cached.discIndex;
+      logger.info('start-backup', `Using cached mapping for ${driveLetter}: disc:${resolvedIndex}`);
+    }
+  }
+
   const modeLabel = extractionMode === 'smart_extract' ? 'Smart Extract' : 'Full Backup';
-  logger.info('start-backup', `Starting parallel backup for ${discName} (disc:${makemkvIndex}) [${modeLabel}]`, {
+  logger.info('start-backup', `Starting parallel backup for ${discName} (disc:${resolvedIndex}) [${modeLabel}]`, {
     driveId,
-    makemkvIndex,
+    makemkvIndex: resolvedIndex,
+    originalIndex: makemkvIndex,
     discSize,
     driveLetter,
     extractionMode,
@@ -134,10 +179,16 @@ export async function startBackup(driveId, makemkvIndex, discName, discSize, dri
   await makemkv.loadSettings();
 
   // Track this backup (include fingerprint, driveLetter for eject, and extractionMode)
-  runningBackups.set(driveId, { makemkv, discName, fingerprint, driveLetter, extractionMode });
+  runningBackups.set(driveId, { makemkv, discName, fingerprint, driveLetter, extractionMode, makemkvIndex: resolvedIndex });
+
+  // DRIVE INDEPENDENCE: Seed the cache with this drive's mapping
+  // This ensures scans during backup use the correct mapping without blocking
+  if (driveLetter && driveDetector) {
+    driveDetector.seedCache(driveLetter, resolvedIndex);
+  }
 
   // Run backup in background (don't await - let it run parallel)
-  runBackup(driveId, makemkv, makemkvIndex, discName, discSize, fingerprint, driveLetter, exportWatcher, extractionMode);
+  runBackup(driveId, makemkv, resolvedIndex, discName, discSize, fingerprint, driveLetter, exportWatcher, extractionMode);
 
   // Return immediately - progress comes via IPC events
   return { success: true, driveId, started: true, fingerprint };

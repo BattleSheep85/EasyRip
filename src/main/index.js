@@ -1,14 +1,37 @@
 // Electron Main Process
 // This runs in Node.js and manages the application window and system interactions
 
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, dialog } from 'electron';
 import logger from './logger.js';
 import { getSharedMakeMKV } from './utils.js';
-import { createWindow, setMainWindow } from './window-manager.js';
+import { createWindow, setMainWindow, getMainWindow } from './window-manager.js';
 import { initBackupManager, getDriveDetector } from './backup-manager.js';
 import { initializeMetadataSystem, cleanupMetadataSystem, getIdentifier } from './metadata-system.js';
 import { setupIPC } from './ipc-handlers.js';
 import { initAutoUpdater } from './updater.js';
+
+// SINGLE INSTANCE LOCK
+// Prevents multiple instances of EasyRip from running simultaneously
+// This is critical because MakeMKV can only be controlled by one process at a time
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  // Another instance is already running - quit immediately
+  console.log('Another instance of EasyRip is already running. Exiting.');
+  app.quit();
+} else {
+  // We got the lock - handle when another instance tries to start
+  app.on('second-instance', (event, commandLine, workingDirectory) => {
+    // Someone tried to run a second instance - focus our window instead
+    const mainWindow = getMainWindow();
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+      }
+      mainWindow.focus();
+    }
+  });
+}
 
 // App lifecycle events
 app.whenReady().then(async () => {
@@ -16,11 +39,7 @@ app.whenReady().then(async () => {
   await logger.init();
   logger.info('app', 'EasyRip starting up');
 
-  // Create main window
-  const mainWindow = createWindow();
-  setMainWindow(mainWindow);
-
-  // Initialize shared MakeMKV instance
+  // Initialize shared MakeMKV instance BEFORE creating window
   const makemkv = await getSharedMakeMKV();
 
   // Initialize metadata system first (creates discIdentifier)
@@ -30,8 +49,13 @@ app.whenReady().then(async () => {
   const discIdentifier = getIdentifier();
   initBackupManager(discIdentifier);
 
-  // Set up IPC handlers
+  // Set up IPC handlers BEFORE creating window
+  // This prevents race condition where renderer calls IPC before handlers exist
   setupIPC();
+
+  // NOW create the window - IPC handlers are ready
+  const mainWindow = createWindow();
+  setMainWindow(mainWindow);
 
   // Initialize auto-updater (checks for updates on startup)
   initAutoUpdater(mainWindow);

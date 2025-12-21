@@ -1,21 +1,106 @@
 // Windows Drive Detection - Fast alternative to MakeMKV scanning
 // Uses fsutil + direct filesystem access for instant, reliable detection
-// Then queries MakeMKV for disc index mapping
+// Then queries MakeMKV for disc index mapping (with caching to avoid blocking during backups)
 
-import { execSync, execFileSync } from 'child_process';
+import { execSync, execFileSync, exec } from 'child_process';
+import { promisify } from 'util';
 import { readdirSync, existsSync } from 'fs';
 import logger from './logger.js';
+
+const execAsync = promisify(exec);
 
 export class DriveDetector {
   constructor() {
     this.makemkvPath = 'C:\\Program Files (x86)\\MakeMKV\\makemkvcon64.exe';
     this.lastError = null; // Track last error for debugging
     this.detectionErrors = []; // Collect errors during detection
+
+    // DRIVE INDEPENDENCE: Cache MakeMKV mapping to avoid blocking during backups
+    // Map: driveLetter -> { discIndex, discType, flags, cachedAt }
+    this.mappingCache = new Map();
+    this.cacheMaxAge = 5 * 60 * 1000; // 5 minutes cache validity
+
+    // Callback to check if backups are running (injected by backup-manager)
+    this.isBackupRunningCheck = null;
+  }
+
+  /**
+   * Set the callback to check if backups are running
+   * This allows DriveDetector to skip blocking MakeMKV calls during backups
+   */
+  setBackupRunningCheck(checkFn) {
+    this.isBackupRunningCheck = checkFn;
+  }
+
+  /**
+   * Seed the cache with known mapping (called when backup starts)
+   * This ensures we have valid mapping data even during long backups
+   */
+  seedCache(driveLetter, discIndex, discType = 1) {
+    this.mappingCache.set(driveLetter, {
+      discIndex,
+      discType,
+      flags: 2, // 2 = disc present
+      cachedAt: Date.now(),
+      source: 'backup-start'
+    });
+    logger.info('drives', `Cache seeded for ${driveLetter} -> disc:${discIndex}`);
+  }
+
+  /**
+   * Clear cache for a specific drive (called when backup completes or disc ejected)
+   */
+  clearCacheForDrive(driveLetter) {
+    this.mappingCache.delete(driveLetter);
+    logger.debug('drives', `Cache cleared for ${driveLetter}`);
+  }
+
+  /**
+   * Check if we have a valid cached mapping for a drive
+   */
+  hasFreshCache(driveLetter) {
+    const cached = this.mappingCache.get(driveLetter);
+    if (!cached) return false;
+    const age = Date.now() - cached.cachedAt;
+    return age < this.cacheMaxAge;
+  }
+
+  /**
+   * Check if any backups are currently running
+   */
+  hasActiveBackups() {
+    if (this.isBackupRunningCheck) {
+      return this.isBackupRunningCheck();
+    }
+    return false;
   }
 
   // Get MakeMKV disc index mapping (drive letter -> disc:N index)
-  getMakeMKVMapping() {
+  // Now ASYNC to prevent UI freezing + smart caching during backups
+  async getMakeMKVMapping(forceRefresh = false) {
     const mapping = new Map();
+
+    // DRIVE INDEPENDENCE: Skip MakeMKV call entirely if backups are running
+    // This prevents the blocking call that freezes the UI
+    if (!forceRefresh && this.hasActiveBackups()) {
+      logger.info('drives', 'Backups running - using cached MakeMKV mapping (skipping MakeMKV call)');
+
+      // Return cached mapping for all drives we know about
+      for (const [driveLetter, cached] of this.mappingCache) {
+        mapping.set(driveLetter, {
+          discIndex: cached.discIndex,
+          discType: cached.discType,
+          flags: cached.flags,
+          fromCache: true
+        });
+      }
+
+      if (mapping.size === 0) {
+        logger.warn('drives', 'No cached mapping available during backup - drives may show fallback indices');
+      }
+
+      return mapping;
+    }
 
     // Check if MakeMKV exists
     if (!existsSync(this.makemkvPath)) {
@@ -26,16 +111,19 @@ export class DriveDetector {
     }
 
     try {
-      logger.debug('drives', 'Querying MakeMKV for disc mapping...');
+      const startTime = Date.now();
+      logger.info('drives', 'Querying MakeMKV for disc mapping (async)...');
 
       // Query MakeMKV for drive list - use disc:9999 which quickly returns DRV lines
-      // Increased timeout to 60s for systems with multiple optical drives
-      const output = execSync(`"${this.makemkvPath}" -r info disc:9999`, {
+      // Using async exec to prevent blocking the main thread
+      const { stdout: output } = await execAsync(`"${this.makemkvPath}" -r info disc:9999`, {
         encoding: 'utf8',
-        timeout: 60000,
-        windowsHide: true,
-        stdio: ['pipe', 'pipe', 'pipe']
+        timeout: 30000,
+        windowsHide: true
       });
+
+      const duration = Date.now() - startTime;
+      logger.info('drives', `MakeMKV query completed in ${duration}ms`);
 
       // Parse DRV lines: DRV:index,flags,?,type,"description","discName","driveLetter"
       const lines = output.split('\n');
@@ -53,7 +141,16 @@ export class DriveDetector {
 
             // flags=2 means disc present, flags=256 means empty drive
             if (flags === 2 && driveLetter) {
-              mapping.set(driveLetter, { discIndex, discType, flags });
+              const mappingData = { discIndex, discType, flags };
+              mapping.set(driveLetter, mappingData);
+
+              // Update cache with fresh data
+              this.mappingCache.set(driveLetter, {
+                ...mappingData,
+                cachedAt: Date.now(),
+                source: 'makemkv-query'
+              });
+
               logger.info('drives', `MakeMKV mapping: ${driveLetter} -> disc:${discIndex}`, { type: discType, flags });
             } else if (flags !== 256 && driveLetter) {
               // Log unexpected flag values for debugging
@@ -79,6 +176,19 @@ export class DriveDetector {
       };
       this.detectionErrors.push(errorInfo);
       logger.error('drives', 'MakeMKV mapping failed', error);
+
+      // On error, return cached data if available
+      if (this.mappingCache.size > 0) {
+        logger.info('drives', 'Using cached mapping due to MakeMKV error');
+        for (const [driveLetter, cached] of this.mappingCache) {
+          mapping.set(driveLetter, {
+            discIndex: cached.discIndex,
+            discType: cached.discType,
+            flags: cached.flags,
+            fromCache: true
+          });
+        }
+      }
     }
 
     return mapping;
@@ -88,6 +198,11 @@ export class DriveDetector {
   async detectDrives() {
     logger.info('drives', 'Starting fast drive detection...');
     this.detectionErrors = []; // Clear previous errors
+
+    const backupsRunning = this.hasActiveBackups();
+    if (backupsRunning) {
+      logger.info('drives', 'Active backups detected - will use cached MakeMKV mapping');
+    }
 
     try {
       // Get all drive letters using fsutil
@@ -171,34 +286,51 @@ export class DriveDetector {
         logger.info('drives', `Drives with media: ${drivesWithMedia.map(d => `${d.driveLetter}(${d.volumeName})`).join(', ')}`);
       }
 
-      // Get MakeMKV disc index mapping
-      const makemkvMapping = this.getMakeMKVMapping();
+      // INSTANT SCAN: Skip MakeMKV query entirely - use cache or detect disc type from filesystem
+      // MakeMKV query will happen in background or when backup starts
+      // This makes scan return instantly instead of taking minutes
 
-      // Build drive objects with disc sizes and MakeMKV indices
+      // Build drive objects with disc sizes - use cache if available, otherwise detect type
       const drives = [];
       for (let i = 0; i < drivesWithMedia.length; i++) {
         const drive = drivesWithMedia[i];
         const discSize = this.getDiscSizeSync(drive.driveLetter);
-        const mkv = makemkvMapping.get(drive.driveLetter);
 
-        // Track if MakeMKV mapping was found
-        const hasMkvMapping = !!mkv;
-        const mkvData = mkv || { discIndex: i, discType: 1 };
+        // Check cache first
+        const cached = this.mappingCache.get(drive.driveLetter);
+        const hasCachedMapping = cached && (Date.now() - cached.cachedAt < this.cacheMaxAge);
 
-        // discType: 1=DVD, 12=Blu-ray
-        const isBluray = mkvData.discType === 12;
+        let makemkvIndex = i;  // Fallback to position-based index
+        let discType = 1;      // Default to DVD
+        let hasMkvMapping = false;
+        let fromCache = false;
 
-        // Detect potential issues
-        let warning = null;
-        if (!hasMkvMapping) {
-          warning = 'MakeMKV mapping not found - using fallback index';
-          logger.warn('drives', `${drive.driveLetter}: ${warning}`);
-          this.detectionErrors.push({
-            stage: 'mapping',
-            drive: drive.driveLetter,
-            error: warning
-          });
+        if (hasCachedMapping) {
+          // Use cached MakeMKV mapping
+          makemkvIndex = cached.discIndex;
+          discType = cached.discType;
+          hasMkvMapping = true;
+          fromCache = true;
+          logger.info('drives', `${drive.driveLetter}: Using cached mapping disc:${makemkvIndex}`);
+        } else {
+          // Detect disc type from filesystem (instant!)
+          // Blu-ray discs have BDMV folder, DVDs have VIDEO_TS
+          try {
+            const hasBDMV = existsSync(`${drive.driveLetter}/BDMV`);
+            const hasVideoTS = existsSync(`${drive.driveLetter}/VIDEO_TS`);
+            if (hasBDMV) {
+              discType = 12;  // Blu-ray
+              logger.info('drives', `${drive.driveLetter}: Detected Blu-ray (BDMV folder)`);
+            } else if (hasVideoTS) {
+              discType = 1;   // DVD
+              logger.info('drives', `${drive.driveLetter}: Detected DVD (VIDEO_TS folder)`);
+            }
+          } catch (e) {
+            logger.debug('drives', `${drive.driveLetter}: Could not detect disc type: ${e.message}`);
+          }
         }
+
+        const isBluray = discType === 12;
 
         drives.push({
           id: i,
@@ -208,17 +340,21 @@ export class DriveDetector {
           hasDisc: true,
           isBluray: isBluray,
           isDVD: !isBluray,
-          discType: mkvData.discType,
+          discType: discType,
           discSize: discSize,
-          makemkvIndex: mkvData.discIndex,  // MakeMKV disc:N index
+          makemkvIndex: makemkvIndex,
           hasMkvMapping: hasMkvMapping,
-          warning: warning,
+          mappingFromCache: fromCache,
+          needsMkvQuery: !hasMkvMapping,  // Flag: needs MakeMKV query before backup
+          warning: hasMkvMapping ? null : 'Will query MakeMKV when backup starts',
         });
 
-        logger.info('drives', `${drive.driveLetter} -> disc:${mkvData.discIndex}`, {
+        logger.info('drives', `${drive.driveLetter} -> disc:${makemkvIndex}`, {
           size: discSize,
           type: isBluray ? 'Blu-ray' : 'DVD',
-          hasMkvMapping
+          hasMkvMapping,
+          fromCache,
+          needsMkvQuery: !hasMkvMapping
         });
       }
 
@@ -276,6 +412,102 @@ export class DriveDetector {
     return this.getDiscSizeSync(driveLetter);
   }
 
+  // Scan a single drive independently (for per-drive refresh button)
+  // This performs a full rescan of just one drive without blocking others
+  async scanSingleDrive(driveLetter) {
+    // Validate drive letter
+    const match = driveLetter.match(/^([A-Za-z]):?\\?$/);
+    if (!match) {
+      return { success: false, error: 'Invalid drive letter format' };
+    }
+    const normalizedLetter = `${match[1].toUpperCase()}:`;
+    logger.info('drives', `Scanning single drive: ${normalizedLetter}`);
+
+    try {
+      // Check if drive has readable media
+      let hasMedia = false;
+      let volumeName = 'Unknown Disc';
+
+      try {
+        readdirSync(normalizedLetter + '/');
+        hasMedia = true;
+
+        // Get volume label
+        try {
+          const volOutput = execFileSync('cmd', ['/c', 'vol', normalizedLetter], {
+            encoding: 'utf8',
+            timeout: 3000,
+            windowsHide: true
+          });
+          const volMatch = volOutput.match(/Volume in drive .+ is (.+)/);
+          if (volMatch?.[1]) {
+            volumeName = volMatch[1].trim();
+          }
+        } catch (volErr) {
+          logger.warn('drives', `Could not get volume label for ${normalizedLetter}: ${volErr.message}`);
+        }
+      } catch (readErr) {
+        // No media or unreadable
+        logger.info('drives', `${normalizedLetter} has no readable media`);
+        return { success: true, hasDisc: false, driveLetter: normalizedLetter };
+      }
+
+      // Get disc size
+      const discSize = this.getDiscSizeSync(normalizedLetter);
+
+      // Get MakeMKV mapping - use cache if backup running, otherwise query fresh
+      let makemkvIndex = 0;
+      let discType = 1;
+      let hasMkvMapping = false;
+      let mappingFromCache = false;
+
+      // Check cache first
+      if (this.hasFreshCache(normalizedLetter)) {
+        const cached = this.mappingCache.get(normalizedLetter);
+        makemkvIndex = cached.discIndex;
+        discType = cached.discType;
+        hasMkvMapping = true;
+        mappingFromCache = true;
+        logger.info('drives', `Using cached mapping for ${normalizedLetter}: disc:${makemkvIndex}`);
+      } else if (!this.hasActiveBackups()) {
+        // No active backups - query MakeMKV for fresh mapping
+        const mapping = await this.getMakeMKVMapping(true); // force refresh
+        const mkvData = mapping.get(normalizedLetter);
+        if (mkvData) {
+          makemkvIndex = mkvData.discIndex;
+          discType = mkvData.discType;
+          hasMkvMapping = true;
+        }
+      } else {
+        // Backups running and no cache - use fallback
+        logger.warn('drives', `No cached mapping for ${normalizedLetter} during backup - using fallback`);
+      }
+
+      const isBluray = discType === 12;
+      const driveInfo = {
+        success: true,
+        hasDisc: true,
+        driveLetter: normalizedLetter,
+        discName: volumeName,
+        description: `Optical Drive (${normalizedLetter})`,
+        isBluray,
+        isDVD: !isBluray,
+        discType,
+        discSize,
+        makemkvIndex,
+        hasMkvMapping,
+        mappingFromCache
+      };
+
+      logger.info('drives', `Single drive scan complete: ${normalizedLetter}`, driveInfo);
+      return driveInfo;
+
+    } catch (error) {
+      logger.error('drives', `Single drive scan failed for ${normalizedLetter}`, error);
+      return { success: false, error: error.message };
+    }
+  }
+
   // Eject a disc from the specified drive
   async ejectDrive(driveLetter) {
     // Security: Strict validation - only allow single letters A-Z
@@ -284,6 +516,9 @@ export class DriveDetector {
       return { success: false, error: 'Invalid drive letter format', driveLetter };
     }
     const drive = match[1].toUpperCase();
+
+    // Clear cache for this drive since disc is being ejected
+    this.clearCacheForDrive(`${drive}:`);
 
     try {
       logger.info('drives', `Ejecting drive ${drive}:`);

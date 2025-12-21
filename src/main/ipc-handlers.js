@@ -68,12 +68,44 @@ function setupDriveHandlers() {
     try {
       logger.info('scan-drives', 'Starting drive detection...');
       const driveDetector = getDriveDetector();
+
+      // Guard against uninitialized driveDetector (race condition safety)
+      if (!driveDetector) {
+        logger.warn('scan-drives', 'DriveDetector not initialized yet - main process still starting up');
+        return {
+          success: false,
+          error: 'System still initializing. Please wait a moment and try again.',
+          notReady: true
+        };
+      }
+
       const drives = await driveDetector.detectDrives();
       logger.info('scan-drives', `Found ${drives.length} drives`, drives.map(d => ({ letter: d.driveLetter, name: d.discName, type: d.isBluray ? 'BD' : 'DVD' })));
       return { success: true, drives };
     } catch (error) {
       logger.error('scan-drives', 'Drive detection failed', error);
       return { success: false, error: error.message, errorDetails: error.stack };
+    }
+  });
+
+  // Scan a single drive (per-drive refresh button)
+  // This is independent and won't block during backups
+  ipcMain.handle('scan-single-drive', async (event, driveLetter) => {
+    try {
+      logger.info('scan-single-drive', `Scanning single drive: ${driveLetter}`);
+      const driveDetector = getDriveDetector();
+
+      if (!driveDetector) {
+        logger.warn('scan-single-drive', 'DriveDetector not initialized yet');
+        return { success: false, error: 'System still initializing.', notReady: true };
+      }
+
+      const result = await driveDetector.scanSingleDrive(driveLetter);
+      logger.info('scan-single-drive', `Single drive scan result`, result);
+      return result;
+    } catch (error) {
+      logger.error('scan-single-drive', `Single drive scan failed for ${driveLetter}`, error);
+      return { success: false, error: error.message };
     }
   });
 
@@ -789,20 +821,8 @@ function setupMetadataHandlers() {
     }
   });
 
-  // Pull Ollama model
-  ipcMain.handle('pull-ollama-model', async (event, modelName) => {
-    try {
-      const ollamaManager = getOllama();
-      if (!ollamaManager) {
-        return { success: false, error: 'Ollama manager not initialized' };
-      }
-      const result = await ollamaManager.ensureModel(modelName);
-      return { success: result };
-    } catch (error) {
-      logger.error('metadata', `Failed to pull model ${modelName}`, error);
-      return { success: false, error: error.message };
-    }
-  });
+  // NOTE: 'pull-ollama-model' handler is now in setupAIProviderHandlers()
+  // with better progress tracking support
 
   // Get metadata watcher queue status
   ipcMain.handle('get-metadata-queue', async () => {

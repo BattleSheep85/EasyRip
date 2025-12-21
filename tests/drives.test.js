@@ -57,14 +57,14 @@ describe('DriveDetector', () => {
   });
 
   describe('getMakeMKVMapping', () => {
-    it('should return Map', () => {
+    it('should return Map', async () => {
       // Mock will return empty since MakeMKV not installed in test env
-      const mapping = detector.getMakeMKVMapping();
+      const mapping = await detector.getMakeMKVMapping();
       assert.ok(mapping instanceof Map);
     });
 
-    it('should handle missing MakeMKV', () => {
-      const mapping = detector.getMakeMKVMapping();
+    it('should handle missing MakeMKV', async () => {
+      const mapping = await detector.getMakeMKVMapping();
       // Mapping will be empty or have errors
       assert.ok(mapping instanceof Map);
       const errors = detector.getDetectionErrors();

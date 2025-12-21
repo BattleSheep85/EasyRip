@@ -14,6 +14,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Fast drive detection (Windows-based)
   scanDrives: () => ipcRenderer.invoke('scan-drives'),
 
+  // Scan a single drive independently (for per-drive refresh)
+  scanSingleDrive: (driveLetter) => ipcRenderer.invoke('scan-single-drive', driveLetter),
+
   // Clean up orphan temp folders
   cleanupOrphanTemps: () => ipcRenderer.invoke('cleanup-orphan-temps'),
 

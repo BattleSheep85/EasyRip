@@ -662,6 +662,12 @@ export class MakeMKVAdapter {
       let filesSuccessful = 0;
       let filesFailed = 0;
       let hasRecoverableErrors = false;
+      // Stall detection - track when progress actually changes
+      let lastProgressChangeTime = Date.now();
+      let lastProgressSize = 0;
+      let stallDetected = false;
+      let lastMakeMKVOutput = '';  // Track last output for diagnostics
+      const STALL_TIMEOUT_MS = 3 * 60 * 1000;  // 3 minutes without progress = stalled
 
       // Send initial 0% progress immediately so UI doesn't show "Starting..." indefinitely
       const startTime = Date.now();
@@ -694,6 +700,11 @@ export class MakeMKVAdapter {
       this.currentProcess.stdout.on('data', (data) => {
         const output = data.toString();
         const lines = output.split('\n');
+
+        // Track last meaningful output for stall diagnostics
+        if (output.trim()) {
+          lastMakeMKVOutput = output.trim().substring(0, 1000);
+        }
 
         for (const line of lines) {
           if (!line.trim()) continue;
@@ -750,6 +761,40 @@ export class MakeMKVAdapter {
                   // Calculate progress: 0-95% for copy, 95-100% for post-processing
                   const sizePercent = Math.min((currentSize / discSize) * 95, 94);
                   smoothedPercent = Math.max(smoothedPercent, sizePercent);
+
+                  // STALL DETECTION: Check if file size has changed
+                  if (currentSize > lastProgressSize) {
+                    // Progress is being made - reset stall timer
+                    lastProgressChangeTime = Date.now();
+                    lastProgressSize = currentSize;
+                    stallDetected = false;
+                  } else if (!stallDetected && inCopyPhase) {
+                    // No size change - check if we've exceeded stall timeout
+                    const stallDuration = Date.now() - lastProgressChangeTime;
+                    if (stallDuration > STALL_TIMEOUT_MS) {
+                      stallDetected = true;
+                      const stallMinutes = Math.round(stallDuration / 60000);
+                      logger.error('makemkv-stall', `BACKUP STALLED for ${discName}`, {
+                        stallDuration: `${stallMinutes} minutes`,
+                        lastSize: this.formatSize(currentSize),
+                        lastPercent: smoothedPercent.toFixed(1) + '%',
+                        lastMakeMKVOutput: lastMakeMKVOutput.substring(0, 500),
+                        processAlive: this.currentProcess && !this.currentProcess.killed,
+                        pid: this.currentProcess?.pid
+                      });
+                      // Send stall notification to UI
+                      if (onProgress) {
+                        onProgress({
+                          ...lastProgress,
+                          stalled: true,
+                          stallDuration: stallMinutes,
+                          stallReason: `No progress for ${stallMinutes} minutes. Last output: ${lastMakeMKVOutput.substring(0, 200)}`
+                        });
+                      }
+                      if (onLog) onLog(`⚠️ STALLED: No progress for ${stallMinutes} minutes`);
+                    }
+                  }
+
                   lastProgress = { percent: smoothedPercent, current: currentSize, total: discSize, max: discSize };
                   if (onProgress) {
                     onProgress(lastProgress);

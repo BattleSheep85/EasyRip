@@ -216,6 +216,11 @@
   color: #ffc85c;
 }
 
+[data-theme="dark"] .status-stalled {
+  background: rgba(187, 0, 0, 0.35);
+  color: #ff6b6b;
+}
+
 [data-theme="dark"] .disc-dvd {
   background: rgba(138, 90, 0, 0.3);
   color: #ffc566;
@@ -1187,6 +1192,25 @@ body {
   font-size: 11px;
 }
 
+/* Scan button - prominent action for scanning drives */
+.btn-scan {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: white;
+  font-weight: 500;
+}
+
+.btn-scan:hover:not(:disabled) {
+  background: var(--accent-primary-hover);
+  border-color: var(--accent-primary-hover);
+}
+
+.btn-scan.scanning {
+  background: var(--text-muted);
+  border-color: var(--text-muted);
+  cursor: wait;
+}
+
 /* Toggle Button Style */
 .btn-toggle {
   background: var(--sap-gray-2);
@@ -1363,6 +1387,17 @@ body {
   color: #856404;
 }
 
+.status-stalled {
+  background: #f8d7da;
+  color: #721c24;
+  animation: stalled-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes stalled-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
 /* Disc Type Badge */
 .disc-type {
   display: inline-block;
@@ -1427,6 +1462,26 @@ body {
 
 .progress-fill.incomplete {
   background: var(--sap-warning);
+}
+
+.progress-fill.stalled {
+  background: #dc3545;
+  animation: stalled-bar-pulse 1s ease-in-out infinite;
+}
+
+@keyframes stalled-bar-pulse {
+  0%, 100% { background: #dc3545; }
+  50% { background: #a71d2a; }
+}
+
+/* Stall detail text under status */
+.stall-detail {
+  color: #721c24;
+  font-size: 10px;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @keyframes progress-shimmer {
@@ -1815,6 +1870,19 @@ body {
 .btn-icon:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* Refresh button - more visible for per-drive rescan */
+.btn-refresh {
+  background: var(--sap-blue-light);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+  font-weight: 600;
+}
+
+.btn-refresh:hover:not(:disabled) {
+  background: var(--accent-primary);
+  color: white;
 }
 
 /* Extraction mode dropdown in table */
@@ -2219,6 +2287,28 @@ body {
   overflow: auto;
   height: 100%;
   margin: 0;
+}
+
+/* Log level color coding */
+.log-line {
+  display: block;
+}
+
+.log-line.log-debug {
+  color: #858585;
+}
+
+.log-line.log-info {
+  color: #4fc3f7;
+}
+
+.log-line.log-warn {
+  color: #ffb74d;
+}
+
+.log-line.log-error {
+  color: #ef5350;
+  font-weight: 500;
 }
 
 /* ============================================
@@ -3547,6 +3637,20 @@ body {
   font-size: 20px;
   padding: 4px 8px;
   cursor: pointer;
+}
+
+/* Hide columns at medium width (1024px) - Progress column */
+@media (max-width: 1024px) {
+  .hide-medium {
+    display: none !important;
+  }
+}
+
+/* Hide columns at narrow width (900px) - Size, Backup, Mode columns */
+@media (max-width: 900px) {
+  .hide-narrow {
+    display: none !important;
+  }
 }
 
 /* Tablet and below (768px) */

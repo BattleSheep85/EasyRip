@@ -120,7 +120,20 @@ function LogsPage() {
           <div className="empty-state">No logs available</div>
         ) : (
           <pre className="system-log-content">
-            {logs}
+            {logs.split('\n').map((line, idx) => {
+              // Determine log level from line content
+              let levelClass = 'log-debug';
+              if (line.includes('[INFO]')) levelClass = 'log-info';
+              else if (line.includes('[WARN]')) levelClass = 'log-warn';
+              else if (line.includes('[ERROR]')) levelClass = 'log-error';
+
+              return (
+                <span key={idx} className={`log-line ${levelClass}`}>
+                  {line}
+                  {'\n'}
+                </span>
+              );
+            })}
             <div ref={logEndRef} />
           </pre>
         )}

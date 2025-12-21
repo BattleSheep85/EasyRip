@@ -15,9 +15,11 @@ function HomePage() {
     drives,
     driveStates,
     driveLogs,
+    isScanning,
     error,
     activeLogTab,
     setActiveLogTab,
+    scanDrives,
     startBackup,
     cancelBackup,
     redoBackup,
@@ -106,6 +108,7 @@ function HomePage() {
       case 'exists': return 'status-badge status-exists';
       case 'incomplete': return 'status-badge status-incomplete';
       case 'error': return 'status-badge status-error';
+      case 'stalled': return 'status-badge status-stalled';
       default: return 'status-badge status-idle';
     }
   }
@@ -118,6 +121,7 @@ function HomePage() {
       case 'exists': return 'Done';
       case 'incomplete': return `Incomplete (${state?.backupRatio?.toFixed(0) || 0}%)`;
       case 'error': return 'Error';
+      case 'stalled': return `STALLED (${state?.stallDuration || '?'}m)`;
       default: return 'Ready';
     }
   }
@@ -139,6 +143,17 @@ function HomePage() {
 
       {/* Toolbar */}
       <div className="toolbar">
+        <button
+          className={`btn btn-sm btn-scan ${isScanning ? 'scanning' : ''}`}
+          onClick={scanDrives}
+          disabled={isScanning}
+          title={isScanning ? 'Scanning...' : 'Scan for optical discs'}
+        >
+          {isScanning ? 'Scanning...' : 'Scan Disks'}
+        </button>
+
+        <div className="toolbar-separator"></div>
+
         <span className="toolbar-info">
           {drives.length} disc(s) | {runningCount} running | {queuedCount > 0 ? `${queuedCount} queued | ` : ''}{completeCount} done
         </span>
@@ -204,11 +219,11 @@ function HomePage() {
                   <th>Drive</th>
                   <th>Type</th>
                   <th>Disc Name</th>
-                  <th>Disc Size</th>
-                  <th>Backup</th>
+                  <th className="hide-narrow">Disc Size</th>
+                  <th className="hide-narrow">Backup</th>
                   <th>Status</th>
-                  <th>Progress</th>
-                  <th>Mode</th>
+                  <th className="hide-medium">Progress</th>
+                  <th className="hide-narrow">Mode</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -227,8 +242,8 @@ function HomePage() {
                         </span>
                       </td>
                       <td>{drive.discName || 'Unknown Disc'}</td>
-                      <td className="size-cell">{formatSize(drive.discSize)}</td>
-                      <td className="size-cell">
+                      <td className="size-cell hide-narrow">{formatSize(drive.discSize)}</td>
+                      <td className="size-cell hide-narrow">
                         {state.backupSize ? formatSize(state.backupSize) : '-'}
                         {state.backupRatio > 0 && state.backupRatio < 100 && (
                           <span className="size-ratio"> ({state.backupRatio.toFixed(0)}%)</span>
@@ -236,36 +251,44 @@ function HomePage() {
                       </td>
                       <td>
                         <span
-                          className={`${getStatusClass(state.status)} ${state.error ? 'has-tooltip' : ''}`}
-                          title={state.error || (drive.warning ? `Warning: ${drive.warning}` : '')}
+                          className={`${getStatusClass(state.status)} ${state.error || state.stalled ? 'has-tooltip' : ''}`}
+                          title={state.stallReason || state.error || (drive.warning ? `Warning: ${drive.warning}` : '')}
                         >
                           {getStatusText(state.status, state)}
                           {state.error && <span className="error-indicator">!</span>}
-                          {drive.warning && !state.error && <span className="warning-indicator">?</span>}
+                          {state.stalled && <span className="error-indicator">⚠</span>}
+                          {drive.warning && !state.error && !state.stalled && <span className="warning-indicator">?</span>}
                         </span>
                         {state.error && (
                           <div className="error-detail">
                             {state.error}
                           </div>
                         )}
+                        {state.stalled && (
+                          <div className="error-detail stall-detail">
+                            {state.stallReason || 'Backup has stalled - no progress detected'}
+                          </div>
+                        )}
                       </td>
-                      <td className="progress-cell">
+                      <td className="progress-cell hide-medium">
                         <div className="progress-bar">
                           <div
-                            className={`progress-fill ${state.status === 'running' ? 'running' : ''} ${state.status === 'running' && (state.progress || 0) < 2 ? 'indeterminate' : ''} ${['complete', 'exists'].includes(state.status) ? 'complete' : ''} ${state.status === 'error' ? 'error' : ''} ${state.status === 'incomplete' ? 'incomplete' : ''}`}
+                            className={`progress-fill ${state.status === 'running' ? 'running' : ''} ${state.status === 'running' && (state.progress || 0) < 2 ? 'indeterminate' : ''} ${['complete', 'exists'].includes(state.status) ? 'complete' : ''} ${state.status === 'error' ? 'error' : ''} ${state.status === 'incomplete' ? 'incomplete' : ''} ${state.status === 'stalled' ? 'stalled' : ''}`}
                             style={{ width: `${state.progress || 0}%` }}
                           ></div>
                           <span className="progress-text">
-                            {state.status === 'running' && (state.progress || 0) < 2
-                              ? 'Starting...'
-                              : state.progress
-                                ? `${Math.round(state.progress)}%`
-                                : '-'
+                            {state.status === 'stalled'
+                              ? `⚠ ${Math.round(state.progress || 0)}%`
+                              : state.status === 'running' && (state.progress || 0) < 2
+                                ? 'Starting...'
+                                : state.progress
+                                  ? `${Math.round(state.progress)}%`
+                                  : '-'
                             }
                           </span>
                         </div>
                       </td>
-                      <td className="mode-cell">
+                      <td className="mode-cell hide-narrow">
                         <select
                           value={driveExtractModes[drive.id] || 'default'}
                           onChange={(e) => handleExtractModeChange(drive.id, e.target.value)}
@@ -285,8 +308,8 @@ function HomePage() {
                           <button
                             onClick={() => refreshDrive(drive.id)}
                             disabled={state.status === 'running' || state.status === 'queued'}
-                            className="btn btn-xs btn-icon"
-                            title="Refresh drive status"
+                            className="btn btn-xs btn-icon btn-refresh"
+                            title="Rescan this drive"
                           >
                             &#x21bb;
                           </button>

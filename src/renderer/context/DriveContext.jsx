@@ -46,13 +46,25 @@ export function DriveProvider({ children }) {
     try {
     // Listen for progress updates
     window.electronAPI.onBackupProgress((data) => {
-      console.log(`[DriveContext] Progress received: driveId=${data.driveId}, percent=${data.percent?.toFixed(1)}%, current=${(data.current / 1024 / 1024 / 1024).toFixed(2)}GB, total=${(data.total / 1024 / 1024 / 1024).toFixed(2)}GB`);
+      console.log(`[DriveContext] Progress received: driveId=${data.driveId}, percent=${data.percent?.toFixed(1)}%, current=${(data.current / 1024 / 1024 / 1024).toFixed(2)}GB, total=${(data.total / 1024 / 1024 / 1024).toFixed(2)}GB${data.stalled ? ' STALLED!' : ''}`);
+
+      // Determine status based on progress and stall detection
+      let newStatus = 'running';
+      if (data.percent >= 100) {
+        newStatus = 'complete';
+      } else if (data.stalled) {
+        newStatus = 'stalled';
+      }
+
       setDriveStates(prev => ({
         ...prev,
         [data.driveId]: {
           ...prev[data.driveId],
           progress: data.percent,
-          status: data.percent >= 100 ? 'complete' : 'running',
+          status: newStatus,
+          stalled: data.stalled || false,
+          stallDuration: data.stallDuration,
+          stallReason: data.stallReason,
         }
       }));
     });
@@ -170,124 +182,7 @@ export function DriveProvider({ children }) {
     };
   }, []);
 
-  // Initial scan on first load only
-  useEffect(() => {
-    if (!window.electronAPI || initializedRef.current) return;
-    initializedRef.current = true;
-
-    console.log('[DriveContext] Initial setup - cleaning orphans and scanning');
-
-    window.electronAPI.cleanupOrphanTemps().then(result => {
-      if (result.success && result.cleaned > 0) {
-        console.log(`Cleaned up ${result.cleaned} orphan temp folder(s)`);
-      }
-      scanDrives();
-    }).catch(err => {
-      console.error('Cleanup error:', err);
-      scanDrives();
-    });
-  }, []);
-
-  // Scan drives function
-  const scanDrives = useCallback(async () => {
-    if (!window.electronAPI) return;
-
-    // Don't scan if any backups are running (preserve state)
-    const hasRunningBackups = Object.values(driveStates).some(
-      s => s.status === 'running' || s.status === 'queued'
-    );
-
-    if (hasRunningBackups) {
-      console.log('[DriveContext] Skipping scan - backups in progress');
-      // Just refresh drive list without resetting states
-      try {
-        const result = await window.electronAPI.scanDrives();
-        if (result.success) {
-          setDrives(result.drives);
-          console.log('[DriveContext] Detected drives during backup:', result.drives.map(d => `${d.driveLetter}: ${d.discName}`));
-          // Don't update driveStates for running/queued backups
-          for (const drive of result.drives) {
-            const existingState = driveStates[drive.id];
-            if (!existingState || (existingState.status !== 'running' && existingState.status !== 'queued')) {
-              const discName = sanitizeDiscName(drive.discName);
-              const statusResult = await window.electronAPI.checkBackupStatus(discName, drive.discSize || 0);
-              if (statusResult.success) {
-                updateDriveStatus(drive.id, statusResult);
-              }
-            }
-          }
-        }
-      } catch (err) {
-        console.error('[DriveContext] Scan error:', err);
-      }
-      return;
-    }
-
-    setIsScanning(true);
-    setError(null);
-
-    try {
-      const result = await window.electronAPI.scanDrives();
-      console.log('[DriveContext] Scan complete, drives detected:', result.success ? result.drives.map(d => `${d.driveLetter}: ${d.discName} (${d.discSize} bytes)`) : 'none');
-
-      if (result.success) {
-        setDrives(result.drives);
-
-        const states = {};
-        for (const drive of result.drives) {
-          const discName = sanitizeDiscName(drive.discName);
-          const statusResult = await window.electronAPI.checkBackupStatus(discName, drive.discSize || 0);
-
-          if (statusResult.success) {
-            if (statusResult.status === 'complete') {
-              states[drive.id] = {
-                status: 'exists',
-                progress: 100,
-                backupSize: statusResult.backupSize,
-                backupRatio: statusResult.backupRatio,
-              };
-            } else if (statusResult.status === 'partial_success') {
-              states[drive.id] = {
-                status: 'partial_success',
-                progress: 100,
-                backupSize: statusResult.backupSize,
-                backupRatio: statusResult.backupRatio,
-                partialSuccess: true,
-                errorsEncountered: statusResult.errorsEncountered || [],
-                filesSuccessful: statusResult.filesSuccessful || 0,
-                filesFailed: statusResult.filesFailed || 0,
-                percentRecovered: statusResult.percentRecovered || 0
-              };
-            } else if (statusResult.status === 'incomplete_backup' || statusResult.status === 'incomplete_temp') {
-              states[drive.id] = {
-                status: 'incomplete',
-                progress: statusResult.backupRatio || statusResult.tempRatio || 0,
-                backupSize: statusResult.backupSize || statusResult.tempSize,
-                backupRatio: statusResult.backupRatio || statusResult.tempRatio,
-              };
-            } else {
-              states[drive.id] = { status: 'idle', progress: 0 };
-            }
-          } else {
-            states[drive.id] = { status: 'idle', progress: 0 };
-          }
-        }
-        setDriveStates(states);
-
-        if (result.drives.length > 0 && activeLogTab === null) {
-          setActiveLogTab(result.drives[0].id);
-        }
-      } else {
-        setError(result.error);
-      }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setIsScanning(false);
-    }
-  }, [driveStates, activeLogTab]);
-
-  // Helper to update single drive status
+  // Helper to update single drive status (defined before scanDrives which uses it)
   const updateDriveStatus = useCallback((driveId, statusResult) => {
     setDriveStates(prev => {
       // Don't update if backup is running
@@ -339,7 +234,147 @@ export function DriveProvider({ children }) {
     });
   }, []);
 
-  // Refresh single drive status
+  // Scan drives function (defined before the useEffect that depends on it)
+  const scanDrives = useCallback(async () => {
+    if (!window.electronAPI) return;
+
+    // Don't scan if any backups are running (preserve state)
+    const hasRunningBackups = Object.values(driveStates).some(
+      s => s.status === 'running' || s.status === 'queued'
+    );
+
+    if (hasRunningBackups) {
+      console.log('[DriveContext] Skipping scan - backups in progress');
+      // Just refresh drive list without resetting states
+      try {
+        const result = await window.electronAPI.scanDrives();
+        if (result.success) {
+          setDrives(result.drives);
+          console.log('[DriveContext] Detected drives during backup:', result.drives.map(d => `${d.driveLetter}: ${d.discName}`));
+          // Don't update driveStates for running/queued backups
+          for (const drive of result.drives) {
+            const existingState = driveStates[drive.id];
+            if (!existingState || (existingState.status !== 'running' && existingState.status !== 'queued')) {
+              const discName = sanitizeDiscName(drive.discName);
+              const statusResult = await window.electronAPI.checkBackupStatus(discName, drive.discSize || 0);
+              if (statusResult.success) {
+                updateDriveStatus(drive.id, statusResult);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[DriveContext] Scan error:', err);
+      }
+      return;
+    }
+
+    setIsScanning(true);
+    setError(null);
+
+    try {
+      const result = await window.electronAPI.scanDrives();
+      console.log('[DriveContext] Scan complete, drives detected:', result.success ? result.drives.map(d => `${d.driveLetter}: ${d.discName} (${d.discSize} bytes)`) : 'none');
+
+      // If main process not ready, return the result for retry logic
+      if (result.notReady) {
+        setError(result.error);
+        setIsScanning(false);
+        return result;
+      }
+
+      if (result.success) {
+        setDrives(result.drives);
+
+        const states = {};
+        for (const drive of result.drives) {
+          const discName = sanitizeDiscName(drive.discName);
+          const statusResult = await window.electronAPI.checkBackupStatus(discName, drive.discSize || 0);
+
+          if (statusResult.success) {
+            if (statusResult.status === 'complete') {
+              states[drive.id] = {
+                status: 'exists',
+                progress: 100,
+                backupSize: statusResult.backupSize,
+                backupRatio: statusResult.backupRatio,
+              };
+            } else if (statusResult.status === 'partial_success') {
+              states[drive.id] = {
+                status: 'partial_success',
+                progress: 100,
+                backupSize: statusResult.backupSize,
+                backupRatio: statusResult.backupRatio,
+                partialSuccess: true,
+                errorsEncountered: statusResult.errorsEncountered || [],
+                filesSuccessful: statusResult.filesSuccessful || 0,
+                filesFailed: statusResult.filesFailed || 0,
+                percentRecovered: statusResult.percentRecovered || 0
+              };
+            } else if (statusResult.status === 'incomplete_backup' || statusResult.status === 'incomplete_temp') {
+              states[drive.id] = {
+                status: 'incomplete',
+                progress: statusResult.backupRatio || statusResult.tempRatio || 0,
+                backupSize: statusResult.backupSize || statusResult.tempSize,
+                backupRatio: statusResult.backupRatio || statusResult.tempRatio,
+              };
+            } else {
+              states[drive.id] = { status: 'idle', progress: 0 };
+            }
+          } else {
+            states[drive.id] = { status: 'idle', progress: 0 };
+          }
+        }
+        setDriveStates(states);
+
+        if (result.drives.length > 0 && activeLogTab === null) {
+          setActiveLogTab(result.drives[0].id);
+        }
+      } else {
+        setError(result.error);
+      }
+      return result;
+    } catch (err) {
+      setError(err.message);
+      return { success: false, error: err.message };
+    } finally {
+      setIsScanning(false);
+    }
+  }, [driveStates, activeLogTab, updateDriveStatus]);
+
+  // Initial scan on first load only (with retry for race condition)
+  // NOTE: This useEffect MUST come AFTER scanDrives is defined
+  useEffect(() => {
+    if (!window.electronAPI || initializedRef.current) return;
+    initializedRef.current = true;
+
+    console.log('[DriveContext] Initial setup - cleaning orphans and scanning');
+
+    // Retry logic for race condition where main process isn't ready yet
+    const scanWithRetry = async (retries = 3) => {
+      const result = await scanDrives();
+      // If we got notReady error and have retries left, wait and retry
+      if (result?.notReady && retries > 0) {
+        console.log(`[DriveContext] Main process not ready, retrying in 500ms... (${retries} retries left)`);
+        await new Promise(r => setTimeout(r, 500));
+        return scanWithRetry(retries - 1);
+      }
+      return result;
+    };
+
+    window.electronAPI.cleanupOrphanTemps().then(result => {
+      if (result.success && result.cleaned > 0) {
+        console.log(`Cleaned up ${result.cleaned} orphan temp folder(s)`);
+      }
+      scanWithRetry();
+    }).catch(err => {
+      console.error('Cleanup error:', err);
+      scanWithRetry();
+    });
+  }, [scanDrives]);
+
+  // Refresh single drive - performs full rescan of just this drive
+  // This is independent and won't block during other backups
   const refreshDrive = useCallback(async (driveId) => {
     if (!window.electronAPI) return;
 
@@ -353,9 +388,40 @@ export function DriveProvider({ children }) {
       return;
     }
 
-    const discName = sanitizeDiscName(drive.discName);
     try {
-      const statusResult = await window.electronAPI.checkBackupStatus(discName, drive.discSize || 0);
+      // Perform full scan of just this drive
+      const scanResult = await window.electronAPI.scanSingleDrive(drive.driveLetter);
+
+      if (!scanResult.success) {
+        console.error(`Failed to scan drive ${drive.driveLetter}:`, scanResult.error);
+        return;
+      }
+
+      if (!scanResult.hasDisc) {
+        // Disc was ejected - remove from drives list
+        setDrives(prev => prev.filter(d => d.id !== driveId));
+        return;
+      }
+
+      // Update drive info in the list (disc name, type, size may have changed)
+      setDrives(prev => prev.map(d => {
+        if (d.id !== driveId) return d;
+        return {
+          ...d,
+          discName: scanResult.discName,
+          discSize: scanResult.discSize,
+          isBluray: scanResult.isBluray,
+          isDVD: scanResult.isDVD,
+          discType: scanResult.discType,
+          makemkvIndex: scanResult.makemkvIndex,
+          hasMkvMapping: scanResult.hasMkvMapping,
+          mappingFromCache: scanResult.mappingFromCache
+        };
+      }));
+
+      // Now check backup status for the updated disc
+      const discName = sanitizeDiscName(scanResult.discName);
+      const statusResult = await window.electronAPI.checkBackupStatus(discName, scanResult.discSize || 0);
       if (statusResult.success) {
         updateDriveStatus(driveId, statusResult);
       }
